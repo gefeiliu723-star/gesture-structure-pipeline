@@ -43,7 +43,7 @@ project_root <- get_env_or("GESTURE_ROOT", "<PATH_TO_PROJECT_ROOT>")
 exports_root <- get_env_or("GESTURE_EXPORTS_ROOT", file.path(project_root, "exports"))
 
 # ---- template + output ----
-template_xlsx <- file.path(exports_root, "alignment_template_with_formulas.xlsx")
+template_xlsx <- file.path(exports_root, "alignment_template.xlsx")
 tag_dir       <- file.path(exports_root, TAG)
 out_xlsx      <- file.path(tag_dir, paste0(TAG, "_alignment.xlsx"))
 
