@@ -1,7 +1,5 @@
-# Quantitative Gesture–Discourse Alignment Pipeline
-
-Scripts:
-# Multi-Modal Kinematic Alignment Pipeline (MKAP)
+# Quantitative Gesture–Discourse Alignment Pipeline  
+*Multi-Modal Kinematic Alignment Pipeline (MKAP)*
 
 ## Overview
 This repository hosts an end-to-end computational framework for quantifying the
@@ -10,10 +8,9 @@ in naturalistic instructional settings.
 
 By integrating computer vision with signal processing, MKAP shifts analysis away from
 categorical gesture labeling toward the **objective measurement of rhythmic behavioral
-enrichment** around discourse-structural nodes.
+enrichment** around discourse-structural nodes. 
 
 ---
-
 ## Core Capabilities
 
 **Computer Vision Front-End**  
@@ -39,7 +36,6 @@ A bifurcated R/Python architecture (via `reticulate`) that produces serialized
 data tables and diagnostic workbooks for downstream statistical modeling.
 
 ---
-
 ## Data Governance & Privacy
 
 **Zero-Data Policy**  
@@ -56,7 +52,6 @@ The pipeline interfaces with standardized annotation formats (e.g., CSV or ELAN-
 discourse markers) while remaining agnostic to annotation semantics.
 
 ---
-
 ## Reproducibility & Portability
 
 MKAP is designed in accordance with Open Science principles:
