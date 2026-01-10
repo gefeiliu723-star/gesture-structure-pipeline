@@ -1,0 +1,22 @@
+# R
+.Rhistory
+.RData
+.Rproj.user/
+
+# Python
+__pycache__/
+*.pyc
+
+# Outputs / big files
+exports/
+results/
+review_clips/
+segments/
+pose_csv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
