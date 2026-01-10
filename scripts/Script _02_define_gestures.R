@@ -8,8 +8,10 @@
 #   - debug_missing_reason_<TAG>_q<q>.csv
 # ============================================================
 
-library(readr)
-library(dplyr)
+suppressPackageStartupMessages({
+  library(readr)
+  library(dplyr)
+})
 
 # ----------------------------
 # (0) USER SETTINGS (PUBLIC TEMPLATE)
@@ -23,6 +25,11 @@ get_env_or <- function(key, default) {
   if (nzchar(v)) v else default
 }
 
+is_placeholder_path <- function(x) {
+  # detects "<PATH_TO_...>" style placeholders
+  grepl("^<PATH_TO_", x)
+}
+
 # ---- identifiers (safe to commit) ----
 TAG <- get_env_or("GESTURE_TAG", "mXX")
 
@@ -31,6 +38,7 @@ fps      <- 30L
 q_main   <- 0.94
 q_robust <- c(0.94, 0.95, 0.96)
 min_len  <- 3L
+win_sec  <- 1.0
 
 # ---- input wrist_tracks directory ----
 # Expected file: wrist_tracks_<TAG>.csv
@@ -39,16 +47,45 @@ in_dir <- get_env_or(
   "<PATH_TO_EXPORTS>/wrist_tracks"
 )
 
-csv_path <- file.path(in_dir, paste0("wrist_tracks_", TAG, ".csv"))
-
-# ---- output directory ----
+# ---- output root ----
 exports_root <- get_env_or(
   "GESTURE_EXPORTS_ROOT",
   "<PATH_TO_EXPORTS>"
 )
 
+# ---- SAFETY: prevent placeholder paths from silently passing ----
+if (is_placeholder_path(in_dir) || is_placeholder_path(exports_root)) {
+  stop(
+    "Path placeholders detected.\n",
+    "Please set env vars before running:\n",
+    "  - GESTURE_WRIST_DIR (e.g., D:/gesture_project/exports/wrist_tracks)\n",
+    "  - GESTURE_EXPORTS_ROOT (e.g., D:/gesture_project/exports)\n",
+    "Current values:\n",
+    "  GESTURE_WRIST_DIR    = ", in_dir, "\n",
+    "  GESTURE_EXPORTS_ROOT = ", exports_root
+  )
+}
+
+csv_path <- file.path(in_dir, paste0("wrist_tracks_", TAG, ".csv"))
+if (!file.exists(csv_path)) {
+  stop(
+    "Input CSV not found:\n  ", csv_path, "\n\n",
+    "Expected file name pattern: wrist_tracks_<TAG>.csv\n",
+    "Check:\n",
+    "  - TAG (GESTURE_TAG) = ", TAG, "\n",
+    "  - in_dir (GESTURE_WRIST_DIR) points to the wrist_tracks folder."
+  )
+}
+
+# ---- output directory ----
 exports_dir <- file.path(exports_root, TAG)
 dir.create(exports_dir, showWarnings = FALSE, recursive = TRUE)
+
+# ---- output files (FIX: define these!) ----
+out_events_csv  <- file.path(exports_dir, paste0("gesture_events_", TAG, ".csv"))
+out_summary_csv <- file.path(exports_dir, paste0("summary_", TAG, ".csv"))
+out_robust_csv  <- file.path(exports_dir, paste0("robust_", TAG, ".csv"))
+out_debug_csv   <- file.path(exports_dir, paste0("debug_missing_reason_", TAG, "_q", q_main, ".csv"))
 
 # ----------------------------
 # (1) READ + BASIC STRUCTURE CHECK
@@ -122,7 +159,6 @@ extract_events <- function(data, q, min_len = 3L, fps = 30L) {
       run = cumsum(above != lag(above, default = FALSE))
     )
   
-  # ✅ reframe() is the correct verb for returning multi-row outputs in grouped context
   events <- tmp %>%
     filter(above) %>%
     group_by(run) %>%
@@ -153,12 +189,11 @@ summary_stats <- tibble(
   q = q_main,
   n_events = nrow(gesture_events),
   events_per_min = ifelse(video_minutes > 0, nrow(gesture_events) / video_minutes, NA_real_),
-  mean_amplitude = mean(gesture_events$max_speed, na.rm = TRUE),
-  sd_amplitude   = sd(gesture_events$max_speed,   na.rm = TRUE),
-  mean_duration  = mean(gesture_events$duration_sec, na.rm = TRUE),
-  sd_duration    = sd(gesture_events$duration_sec,   na.rm = TRUE)
+  mean_amplitude = if (nrow(gesture_events) > 0) mean(gesture_events$max_speed, na.rm = TRUE) else NA_real_,
+  sd_amplitude   = if (nrow(gesture_events) > 1) sd(gesture_events$max_speed,   na.rm = TRUE) else NA_real_,
+  mean_duration  = if (nrow(gesture_events) > 0) mean(gesture_events$duration_sec, na.rm = TRUE) else NA_real_,
+  sd_duration    = if (nrow(gesture_events) > 1) sd(gesture_events$duration_sec,   na.rm = TRUE) else NA_real_
 )
-
 write_csv(summary_stats, out_summary_csv)
 
 print(head(gesture_events, 10))
@@ -168,7 +203,6 @@ print(summary_stats)
 # (4.5) DEBUG: Missing-Event Diagnostics (window-based)
 # ----------------------------
 thr_main <- suppressWarnings(as.numeric(quantile(dat2$hand_speed, q_main, na.rm = TRUE, type = 7)))
-win_sec <- 1.0
 
 debug_windows <- dat2 %>%
   mutate(
@@ -221,7 +255,7 @@ debug_missing <- debug_windows %>%
   arrange(t_start)
 
 write_csv(debug_missing, out_debug_csv)
-cat("\n[DEBUG] Saved missing-reason table:\n", out_debug_csv, "\n")
+cat("\n[DEBUG] Saved missing-reason table:\n  ", out_debug_csv, "\n", sep = "")
 
 # ----------------------------
 # (5) ROBUSTNESS
@@ -233,8 +267,8 @@ robust_tbl <- lapply(q_robust, function(qq) {
     q = qq,
     n_events = nrow(ev),
     events_per_min = ifelse(video_minutes > 0, nrow(ev) / video_minutes, NA_real_),
-    mean_amplitude = mean(ev$max_speed, na.rm = TRUE),
-    mean_duration  = mean(ev$duration_sec, na.rm = TRUE)
+    mean_amplitude = if (nrow(ev) > 0) mean(ev$max_speed, na.rm = TRUE) else NA_real_,
+    mean_duration  = if (nrow(ev) > 0) mean(ev$duration_sec, na.rm = TRUE) else NA_real_
   )
 }) %>% bind_rows()
 
@@ -242,7 +276,7 @@ write_csv(robust_tbl, out_robust_csv)
 print(robust_tbl)
 
 cat("\nSaved:\n",
-    "events :", out_events_csv,  "\n",
-    "summary:", out_summary_csv, "\n",
-    "robust :", out_robust_csv,  "\n",
-    "debug  :", out_debug_csv,   "\n")
+    "  events :", out_events_csv,  "\n",
+    "  summary:", out_summary_csv, "\n",
+    "  robust :", out_robust_csv,  "\n",
+    "  debug  :", out_debug_csv,   "\n", sep = "")
