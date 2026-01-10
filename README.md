@@ -67,12 +67,17 @@ MKAP is designed in accordance with Open Science principles:
 - **Deterministic Logic**  
   Given identical kinematic inputs and hyper-parameters (e.g., quantile thresholds,
   window sizes), the pipeline yields reproducible, deterministic outputs.
+
+An empty Excel template defining alignment structure and formulas is provided in `templates/`.  
+No data or annotations are embedded.
+
 ---
 ## Ethics & Compliance
 
 Users are responsible for ensuring that application of this pipeline complies with
 institutional IRB protocols, GDPR/FERPA regulations, and informed-consent requirements
 governing the source footage.
+
 ---
 ## Citation
 
