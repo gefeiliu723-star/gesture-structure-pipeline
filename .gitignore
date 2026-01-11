@@ -35,8 +35,7 @@ scripts/yolov8*.pt
 ############################################################
 # Data outputs (DO NOT TRACK)
 ############################################################
-exports/*/*.csv
-exports/*/*.xlsx
+exports/**
 results/
 review_clips/
 segments/
@@ -47,3 +46,5 @@ pose_csv/
 ############################################################
 !exports/alignment_template_with_formulas.xlsx
 !exports/.gitkeep
+!exports/wrist_tracks/.gitkeep
+
