@@ -90,6 +90,13 @@ This repository is intended for research use rather than turnkey deployment.
 3. Configure environment variables or local paths for user-provided datasets
 4. Execute scripts sequentially following the pipeline order documented in `scripts/`
 
+## Architecture
+
+### Unified R–Python Architecture
+
+The pipeline utilizes a unified R–Python architecture via `reticulate`.  
+By bridging YOLOv8 and MediaPipe directly into the R environment, the framework enables in-memory data transfer, ensuring a seamless flow from raw video to statistical modeling without the overhead of intermediate files.
+
 
 ## Ethics & Compliance
 
