@@ -9,6 +9,9 @@
 This repository hosts an end-to-end computational framework for quantifying the **temporal alignment between manual kinematics and discourse-structural organization** in naturalistic instructional settings.
 
 By integrating **computer vision** with **signal processing**, MKAP shifts analysis away from categorical gesture labeling toward the **objective measurement of rhythmic behavioral enrichment** around discourse-structural nodes.
+## Pipeline Overview
+
+![MKAP Pipeline](mkap_pipeline_flow.png)
 
 ---
 
