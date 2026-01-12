@@ -90,11 +90,19 @@ This repository is intended for research use rather than turnkey deployment.
 3. Configure environment variables or local paths for user-provided datasets
 4. Execute scripts sequentially following the pipeline order documented in `scripts/`
 
+The downstream analysis stage requires a single alignment workbook located at
+`exports/<tag>/<tag>_alignment.xlsx`.
+
+Analysis results are written to a tag-specific subdirectory under `results/`,  
+which does **not** need to exist in advance and will be created automatically.
 
 ## Ethics & Compliance
 
 Users are responsible for ensuring that application of this pipeline complies with institutional IRB protocols, GDPR / FERPA regulations, and informed-consent requirements governing the source footage.
 
+## License
+
+This project is released under the MIT License.
 
 ## Citation
 
