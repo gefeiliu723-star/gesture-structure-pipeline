@@ -12,6 +12,11 @@
 # Key idea:
 #   Use PoseLandmarker shoulder visibility (ls_vis / rs_vis) to define teacher_present.
 #   This filters out student close-ups / student hand close-ups where shoulders are missing.
+#
+# NOTE:
+# This script is provided as a configurable template.
+# Users must set GESTURE_ROOT or replace <PATH_TO_PROJECT_ROOT>.
+
 # ============================================================
 
 suppressPackageStartupMessages({
