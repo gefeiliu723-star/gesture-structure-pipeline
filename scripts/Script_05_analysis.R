@@ -1,16 +1,20 @@
-#!/user/bin/env Rscript
 # ============================================================
 # Script 05: Analysis (Node ±window) + Macro breakdown + Permutation
-# INPUT:  <project_root>/exports/<tag>/<tag>_alignment.xlsx   (ONLY THIS)
-# OUTPUT: <project_root>/results/<tag>/ with <tag>_ prefix
-# NO KEEP, NO GATING, NO CONF FILTERS
-# Permutation null: circular time-shift of structural node times
-# ============================================================
-# EN Fixes:
-#  1) Prevent NA in logical contexts: hard-clean event times; skip NA/Inf in loops
-#  2) Macro case-insensitive: macro / Macro supported
-#  3) PointID case-insensitive: pointid / PointID supported
-#  4) Structural time column mapping: time_s / time_sec / t_sec / time supported
+# GitHub-ready (portable paths)
+#
+# INPUT : exports/<tag>/<tag>_alignment.xlsx   (ONLY THIS)
+# OUTPUT: results/<tag>/  with <tag>_ prefix
+#
+# DEFAULT: NO KEEP FILTERS
+# OPTIONAL: KEEP/DROP + Confidence gating from Alignment sheet
+#
+# Usage:
+#   Rscript scripts/05_analysis_alignment.R
+#   Rscript scripts/05_analysis_alignment.R m07 2
+#   Rscript scripts/05_analysis_alignment.R m07 2 2000 42
+#
+# Optional env var:
+#   GESTURE_PROJECT_ROOT=/path/to/repo_root
 # ============================================================
 
 suppressPackageStartupMessages({
@@ -22,32 +26,37 @@ suppressPackageStartupMessages({
 })
 
 # ----------------------------
-# CONFIG (GitHub-friendly)
+# ONLY EDIT THIS (or pass via CLI)
 # ----------------------------
-# Repo layout assumption:
-#   project_root/
-#     exports/<tag>/<tag>_alignment.xlsx
-#     results/<tag>/
-#
-# If you run from repo root, project_root="." works.
-project_root <- Sys.getenv("MKAP_ROOT", unset = ".")
-tag          <- Sys.getenv("MKAP_TAG",  unset = "m01")
+args <- commandArgs(trailingOnly = TRUE)
 
-window_s     <- as.numeric(Sys.getenv("MKAP_WINDOW_S", unset = "2"))
+tag      <- if (length(args) >= 1) args[[1]] else "m07"
+window_s <- if (length(args) >= 2) as.numeric(args[[2]]) else 2
 
 # Permutation settings
-B_perm       <- as.integer(Sys.getenv("MKAP_B",    unset = "2000"))
-seed_perm    <- as.integer(Sys.getenv("MKAP_SEED", unset = "42"))
+B_perm    <- if (length(args) >= 3) as.integer(args[[3]]) else 2000L
+seed_perm <- if (length(args) >= 4) as.integer(args[[4]]) else 42L
 
 # ----------------------------
-# PATHS (relative)
+# OPTIONAL: KEEP/DROP + Confidence gating
 # ----------------------------
-export_dir <- file.path(project_root, "exports", tag)
-result_dir <- file.path(project_root, "results", tag)
+use_keep_filter <- FALSE   # <- set TRUE to enable gating
+min_confidence  <- 1       # <- keep only if CONF >= this (1/2/3)
+default_keep    <- 1       # <- if KEEP is blank/NA, treat as keep(1) by default
+default_conf    <- 3       # <- if Confidence blank/NA, treat as 3 by default
+
+# ----------------------------
+# PORTABLE PROJECT PATHS
+# ----------------------------
+proj_root  <- Sys.getenv("GESTURE_PROJECT_ROOT", unset = getwd())
+
+export_dir <- file.path(proj_root, "exports", tag)
+result_dir <- file.path(proj_root, "results", tag)
 dir.create(result_dir, showWarnings = FALSE, recursive = TRUE)
 
 xlsx_path  <- file.path(export_dir, paste0(tag, "_alignment.xlsx"))
 
+# output helper
 out_file <- function(stem) file.path(result_dir, paste0(tag, "_", stem, ".csv"))
 
 # ----------------------------
@@ -83,7 +92,7 @@ point_in_intervals <- function(t_vec, intervals) {
   j <- 1L
   for (i in seq_along(t_vec)) {
     t <- t_vec[i]
-    if (!is.finite(t)) next  # HARDEN: skip NA/Inf
+    if (!is.finite(t)) next
     
     while (j <= nrow(intervals) && is.finite(intervals$end[j]) && t > intervals$end[j]) {
       j <- j + 1L
@@ -103,8 +112,11 @@ point_in_intervals <- function(t_vec, intervals) {
 # CHECK INPUT
 # ----------------------------
 if (!file.exists(xlsx_path)) {
-  stop("Missing input workbook: ", xlsx_path, "\n",
-       "Expected: <project_root>/exports/<tag>/<tag>_alignment.xlsx")
+  stop(
+    "Missing alignment workbook: ", xlsx_path, "\n",
+    "Expected: exports/<tag>/<tag>_alignment.xlsx\n",
+    "Tip: run from repo root OR set env var GESTURE_PROJECT_ROOT."
+  )
 }
 
 # ----------------------------
@@ -112,7 +124,6 @@ if (!file.exists(xlsx_path)) {
 # ----------------------------
 events <- read_excel(xlsx_path, sheet = "GestureEvents") %>% as_tibble()
 
-# Accept common column name variants for start/end (case-insensitive)
 events <- events %>%
   rename_with(~"start_sec", matches("^start_?sec$|^event_start_?sec$|^event_start_?s$|^start$", ignore.case = TRUE)) %>%
   rename_with(~"end_sec",   matches("^end_?sec$|^event_end_?sec$|^event_end_?s$|^end$", ignore.case = TRUE))
@@ -121,7 +132,7 @@ if (!all(c("start_sec", "end_sec") %in% names(events))) {
   stop("GestureEvents must contain start/end columns (e.g., start_sec & end_sec).")
 }
 
-# Build event_id robustly (event_id / eventid / EventID / fallback row_number)
+# Build event_id robustly
 if ("event_id" %in% names(events)) {
   events$event_id <- as.character(events$event_id)
 } else if ("eventid" %in% names(events)) {
@@ -138,8 +149,10 @@ events <- events %>%
   mutate(
     start_sec = suppressWarnings(as.numeric(start_sec)),
     end_sec   = suppressWarnings(as.numeric(end_sec))
-  ) %>%
-  # HARDEN: drop NA/invalid events (prevents while/if NA crash)
+  )
+
+# HARDEN: drop NA/invalid events
+events <- events %>%
   filter(is.finite(start_sec), is.finite(end_sec), end_sec >= start_sec) %>%
   mutate(t_peak = (start_sec + end_sec) / 2) %>%
   filter(is.finite(t_peak))
@@ -151,20 +164,116 @@ if (!is.finite(T_total) || is.na(T_total) || T_total <= 0) stop("Bad T_total inf
 
 message(sprintf("Loaded events: n=%d | T_total=%.3f sec", nrow(events), T_total))
 
+# ============================================================
+# OPTIONAL: KEEP/DROP + Confidence gating (from Alignment sheet)
+# ============================================================
+audit_pointlevel <- NULL
+audit_eventlevel <- NULL
+keep_event_ids <- NULL
+drop_event_ids <- NULL
+
+if (use_keep_filter) {
+  
+  aln <- read_excel(xlsx_path, sheet = "Alignment") %>% as_tibble()
+  
+  names(aln) <- names(aln) %>%
+    str_replace_all("\\.+", "_") %>%
+    str_replace_all("[^A-Za-z0-9_]", "_") %>%
+    str_replace_all("_+", "_") %>%
+    tolower()
+  
+  event_cols <- names(aln)[str_detect(names(aln), regex("^eventid($|_)|eventid_auto|eventid_manual", ignore_case = TRUE))]
+  if (length(event_cols) == 0) stop("Alignment sheet: could not find an EventID column (manual/auto).")
+  
+  pick_event_col <- function(cols) {
+    if (any(cols == "eventid_manual")) return("eventid_manual")
+    if (any(str_detect(cols, "manual"))) return(cols[str_detect(cols, "manual")][1])
+    if (any(cols == "eventid_auto")) return("eventid_auto")
+    if (any(str_detect(cols, "auto"))) return(cols[str_detect(cols, "auto")][1])
+    cols[1]
+  }
+  event_col <- pick_event_col(event_cols)
+  
+  keep_cols <- names(aln)[str_detect(names(aln), regex("^keep($|_)|keep_drop", ignore_case = TRUE))]
+  if (length(keep_cols) == 0) stop("Alignment sheet: missing KEEP/DROP column.")
+  keep_col <- keep_cols[1]
+  
+  conf_cols <- names(aln)[str_detect(names(aln), regex("^confidence($|_)", ignore_case = TRUE))]
+  conf_col <- if (length(conf_cols) == 0) NA_character_ else conf_cols[1]
+  
+  reason_cols <- names(aln)[str_detect(names(aln), regex("^reason($|_)", ignore_case = TRUE))]
+  reason_col <- if (length(reason_cols) == 0) NA_character_ else reason_cols[1]
+  
+  pid_cols <- names(aln)[str_detect(names(aln), regex("^pointid($|_)", ignore_case = TRUE))]
+  pid_col <- if (length(pid_cols) == 0) NA_character_ else pid_cols[1]
+  
+  t_cols <- names(aln)[str_detect(names(aln), regex("^t_struct_sec$|^time_s$|^time_sec$|^t_sec$|^time$", ignore_case = TRUE))]
+  t_col <- if (length(t_cols) == 0) NA_character_ else t_cols[1]
+  
+  audit_pointlevel <- aln %>%
+    transmute(
+      PointID = if (!is.na(pid_col)) as.character(.data[[pid_col]]) else as.character(row_number()),
+      t_struct_sec = if (!is.na(t_col)) suppressWarnings(as.numeric(.data[[t_col]])) else NA_real_,
+      EventID_alignment = as.character(.data[[event_col]]),
+      KEEP_raw = suppressWarnings(as.numeric(.data[[keep_col]])),
+      Confidence_raw = if (!is.na(conf_col)) suppressWarnings(as.numeric(.data[[conf_col]])) else NA_real_,
+      Reason = if (!is.na(reason_col)) as.character(.data[[reason_col]]) else NA_character_
+    ) %>%
+    mutate(
+      KEEP = ifelse(is.na(KEEP_raw), default_keep, KEEP_raw),
+      Confidence = ifelse(is.na(Confidence_raw), default_conf, Confidence_raw),
+      decision = case_when(
+        is.na(EventID_alignment) | EventID_alignment == "" ~ "NO_EVENTID",
+        KEEP != 1 ~ "DROP_KEEP0",
+        Confidence < min_confidence ~ "DROP_LOWCONF",
+        TRUE ~ "KEEP"
+      )
+    )
+  
+  audit_eventlevel <- audit_pointlevel %>%
+    filter(!is.na(EventID_alignment), EventID_alignment != "") %>%
+    group_by(EventID_alignment) %>%
+    summarise(
+      n_rows = n(),
+      n_keep_rows = sum(decision == "KEEP", na.rm = TRUE),
+      n_drop_keep0 = sum(decision == "DROP_KEEP0", na.rm = TRUE),
+      n_drop_lowconf = sum(decision == "DROP_LOWCONF", na.rm = TRUE),
+      min_conf = suppressWarnings(min(Confidence, na.rm = TRUE)),
+      max_conf = suppressWarnings(max(Confidence, na.rm = TRUE)),
+      reasons = paste(unique(na.omit(Reason)), collapse = " | "),
+      .groups = "drop"
+    ) %>%
+    mutate(kept_event = n_keep_rows > 0) %>%
+    arrange(desc(kept_event), desc(n_keep_rows), EventID_alignment)
+  
+  keep_event_ids <- audit_eventlevel %>% filter(kept_event) %>% pull(EventID_alignment) %>% unique()
+  drop_event_ids <- audit_eventlevel %>% filter(!kept_event) %>% pull(EventID_alignment) %>% unique()
+  
+  write_csv(audit_pointlevel, out_file("keep_audit_pointlevel"))
+  write_csv(audit_eventlevel, out_file("keep_audit_eventlevel"))
+  write_csv(tibble(event_id = keep_event_ids), out_file("kept_event_ids"))
+  write_csv(tibble(event_id = drop_event_ids), out_file("dropped_event_ids"))
+  
+  events_before <- nrow(events)
+  events <- events %>% filter(event_id %in% keep_event_ids)
+  
+  if (nrow(events) == 0) {
+    stop("After KEEP/CONF filtering, no events remain. Check Alignment sheet EventID values.")
+  }
+  
+  message(sprintf("[KEEP FILTER ON] events: %d -> %d kept (min_conf=%d)",
+                  events_before, nrow(events), min_confidence))
+}
+
 # ----------------------------
 # LOAD STRUCTURAL POINTS (FROM XLSX)
-# ONLY use: time + Macro (no filters)
 # ----------------------------
 sp <- read_excel(xlsx_path, sheet = "StructuralPoints") %>% as_tibble()
 
-# Map time column -> time_s (case-insensitive)
 time_col <- names(sp)[str_detect(names(sp), regex("^time_s$|^time_sec$|^t_sec$|^time$", ignore_case = TRUE))][1]
-if (is.na(time_col) || !nzchar(time_col)) {
-  stop("StructuralPoints must contain a time column: time_s (or time_sec/t_sec/time).")
-}
+if (is.na(time_col) || !nzchar(time_col)) stop("StructuralPoints must contain time_s (or time_sec/t_sec/time).")
 sp <- sp %>% rename(time_s = all_of(time_col))
 
-# Map Macro column robustly (macro/Macro)
 macro_col <- names(sp)[str_detect(names(sp), regex("^macro$", ignore_case = TRUE))][1]
 if (is.na(macro_col) || !nzchar(macro_col)) {
   sp <- sp %>% mutate(Macro = NA_character_)
@@ -172,7 +281,6 @@ if (is.na(macro_col) || !nzchar(macro_col)) {
   sp <- sp %>% rename(Macro = all_of(macro_col)) %>% mutate(Macro = as.character(.data$Macro))
 }
 
-# Map PointID column robustly (pointid/PointID/point_id/id). optional.
 pid_col <- names(sp)[str_detect(names(sp), regex("^pointid$|^point_id$|^id$", ignore_case = TRUE))][1]
 if (!is.na(pid_col) && nzchar(pid_col)) {
   sp <- sp %>% rename(PointID = all_of(pid_col)) %>% mutate(PointID = as.character(.data$PointID))
@@ -185,7 +293,7 @@ sp2 <- sp %>%
     time_s = suppressWarnings(as.numeric(time_s)),
     Macro  = ifelse(is.na(Macro) | str_trim(Macro) == "", "UNLABELED", str_trim(Macro))
   ) %>%
-  filter(is.finite(time_s))  # HARDEN
+  filter(is.finite(time_s))
 
 if (nrow(sp2) == 0) stop("No valid structural points after cleaning (time_s all NA?).")
 
@@ -208,7 +316,8 @@ overall_union <- merge_intervals(sp_windows %>% select(start, end))
 T_in  <- sum(overall_union$end - overall_union$start)
 T_out <- T_total - T_in
 
-events <- events %>% mutate(struct_overall = point_in_intervals(t_peak, overall_union))
+events <- events %>%
+  mutate(struct_overall = point_in_intervals(t_peak, overall_union))
 
 N_all <- nrow(events)
 N_in  <- sum(events$struct_overall, na.rm = TRUE)
@@ -231,7 +340,9 @@ summary_overall <- tibble(
   T_out = T_out,
   r_in = r_in,
   r_out = r_out,
-  Lift = Lift
+  Lift = Lift,
+  keep_filter = use_keep_filter,
+  min_confidence = ifelse(use_keep_filter, min_confidence, NA_integer_)
 )
 
 write_csv(summary_overall, out_file("summary_overall"))
@@ -261,7 +372,8 @@ summary_by_macro <- lapply(macros_main, function(m) {
     N_in = N_in_m,
     r_in = r_in_m,
     r_out = baseline_r_out,
-    Lift = Lift_m
+    Lift = Lift_m,
+    keep_filter = use_keep_filter
   )
 }) %>%
   bind_rows() %>%
@@ -322,7 +434,6 @@ compute_lift_from_points <- function(events_t, point_times, T_total, window_s) {
     ))
   }
   
-  # merge intervals
   out_s <- c(); out_e <- c()
   cur_s <- w$start[1]; cur_e <- w$end[1]
   if (nrow(w) >= 2) {
@@ -342,7 +453,6 @@ compute_lift_from_points <- function(events_t, point_times, T_total, window_s) {
   T_in  <- sum(union$end - union$start)
   T_out <- T_total - T_in
   
-  # event in union
   in_win <- rep(FALSE, length(events_t))
   j <- 1L
   for (i in seq_along(events_t)) {
@@ -427,7 +537,9 @@ perm_overall_df <- tibble(
   null_mean  = perm_overall$null_mean,
   null_sd    = perm_overall$null_sd,
   z_score    = perm_overall$z,
-  B          = perm_overall$B
+  B          = perm_overall$B,
+  keep_filter = use_keep_filter,
+  min_confidence = ifelse(use_keep_filter, min_confidence, NA_integer_)
 )
 
 write_csv(perm_overall_df, out_file("perm_overall"))
@@ -460,7 +572,9 @@ perm_by_macro <- lapply(macros_perm, function(m) {
     null_mean  = res$null_mean,
     null_sd    = res$null_sd,
     z_score    = res$z,
-    B          = res$B
+    B          = res$B,
+    keep_filter = use_keep_filter,
+    min_confidence = ifelse(use_keep_filter, min_confidence, NA_integer_)
   )
 }) %>%
   bind_rows() %>%
@@ -469,7 +583,7 @@ perm_by_macro <- lapply(macros_perm, function(m) {
 write_csv(perm_by_macro, out_file("perm_by_macro"))
 
 # ----------------------------
-# PRINT + DONE
+# PRINT
 # ----------------------------
 print(summary_overall)
 cat("\nSaved to:\n",
@@ -479,3 +593,11 @@ cat("\nSaved to:\n",
     "  ", out_file("events_with_struct_flags"), "\n",
     "  ", out_file("perm_overall"), "\n",
     "  ", out_file("perm_by_macro"), "\n", sep = "")
+
+if (use_keep_filter) {
+  cat("\nKEEP FILTER AUDIT:\n",
+      "  ", out_file("keep_audit_pointlevel"), "\n",
+      "  ", out_file("keep_audit_eventlevel"), "\n",
+      "  ", out_file("kept_event_ids"), "\n",
+      "  ", out_file("dropped_event_ids"), "\n", sep = "")
+}
