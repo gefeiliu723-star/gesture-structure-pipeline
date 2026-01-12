@@ -80,7 +80,6 @@ No data or annotations are embedded.
 The pipeline uses YOLOv8 for person detection.  
 Pretrained weights (e.g., `yolov8n.pt`) are automatically downloaded by the Ultralytics package at runtime and are not included in this repository.
 
-
 ## Installation
 
 This repository is intended for research use rather than turnkey deployment.
@@ -90,7 +89,16 @@ This repository is intended for research use rather than turnkey deployment.
 3. Configure environment variables or local paths for user-provided datasets
 4. Execute scripts sequentially following the pipeline order documented in `scripts/`
 
+The downstream analysis stage requires a single alignment workbook located at
+`exports/<tag>/<tag>_alignment.xlsx`.
+
+Analysis results are written to a tag-specific subdirectory under `results/`,  
+which does **not** need to exist in advance and will be created automatically.
+
+
 ## Architecture
+
+An R-centric pipeline with Python computer vision modules integrated through reticulate, enabling a fully R-native workflow without requiring direct interaction with Python code.
 
 ### Unified R–Python Architecture
 
@@ -102,6 +110,9 @@ By bridging YOLOv8 and MediaPipe directly into the R environment, the framework 
 
 Users are responsible for ensuring that application of this pipeline complies with institutional IRB protocols, GDPR / FERPA regulations, and informed-consent requirements governing the source footage.
 
+## License
+
+This project is released under the MIT License.
 
 ## Citation
 
