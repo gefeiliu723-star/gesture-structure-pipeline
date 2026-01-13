@@ -1,12 +1,17 @@
 # ============================================================
-# Script 1 (PUBLIC / FINAL):
+# Script 01 (GitHub-ready):
 # Segment mp4 -> YOLO teacher box -> MediaPipe Pose -> CSV
 #
-# Output (default):
-#   <proj_root>/exports/wrist_tracks/wrist_tracks_<tag>.csv
-# Note:
-# - This repo does NOT include any videos/URLs. Provide your own local MP4.
-# - You may override paths via environment variables (see ENV below).
+# Input:
+#   segments/<tag>_*.mp4   (default auto-pick newest)
+# Output:
+#   exports/wrist_tracks/wrist_tracks_<tag>.csv
+#
+# Key:
+#   - HARD CHECK: tag must match video filename prefix mXX_
+#   - No absolute paths; uses env vars:
+#       GESTURE_PROJECT_ROOT (optional, default: getwd())
+#       RETICULATE_PYTHON or MP_PYTHON (required unless already configured)
 # ============================================================
 
 suppressPackageStartupMessages({
@@ -14,57 +19,132 @@ suppressPackageStartupMessages({
 })
 
 # ----------------------------
-# (0) USER SETTINGS (PUBLIC TEMPLATE)
+# (0) USER SETTINGS (EDIT ONLY HERE)
 # ----------------------------
-# IMPORTANT:
-# - Do NOT commit real local paths or YouTube IDs.
-# - Configure via environment variables OR edit placeholders below.
+tag <- "m03"  # MUST match video filename prefix (m03_...)
 
-# Option A (recommended): set env vars (Windows: System Env / .Renviron)
-#   GESTURE_VIDEO : full local path to an .mp4 file (or a downloaded segment)
-#   GESTURE_TAG   : a short id like "m01" / "demo01" (do not use YouTube IDs)
-#   GESTURE_PY    : path to python.exe (with ultralytics + mediapipe + opencv installed)
-#   GESTURE_TASK  : path to pose_landmarker_full.task
-#   GESTURE_ROOT  : project root (the folder that contains exports/)
+# Option A (recommended): leave NULL to auto-pick newest segments/<tag>_*.mp4
+video_path <- NULL
 
-get_env_or <- function(key, default) {
-  v <- Sys.getenv(key, unset = "")
-  if (nzchar(v)) v else default
+# Option B: specify a relative path under project root, e.g.
+# video_path <- "segments/m03_XXXX_30fps_....mp4"
+
+# Python env: set ONE of these env vars before running:
+#   Sys.setenv(RETICULATE_PYTHON=".../python.exe")
+#   Sys.setenv(MP_PYTHON=".../python.exe")   # alternative
+#
+# If you insist to hardcode (not recommended), you can set:
+# PY <- "path/to/python.exe"
+
+# ----------------------------
+# (0.1) PROJECT ROOT (portable)
+# ----------------------------
+proj_root <- Sys.getenv("GESTURE_PROJECT_ROOT", unset = getwd())
+
+# ----------------------------
+# (0.2) Python interpreter (portable)
+# ----------------------------
+PY <- Sys.getenv("RETICULATE_PYTHON", unset = "")
+if (!nzchar(PY)) PY <- Sys.getenv("MP_PYTHON", unset = "")
+
+if (nzchar(PY)) {
+  Sys.setenv(RETICULATE_PYTHON = PY)
+  reticulate::use_python(PY, required = TRUE)
 }
 
-# Public-safe placeholders (OK to commit)
-video_path <- get_env_or("GESTURE_VIDEO", "<PATH_TO_LOCAL_VIDEO>.mp4")
-tag        <- get_env_or("GESTURE_TAG",   "mXX")
+# ----------------------------
+# (0.3) Locate video (auto)
+# ----------------------------
+pick_newest <- function(files) {
+  files <- files[file.exists(files)]
+  if (length(files) == 0) return(NA_character_)
+  files[order(file.info(files)$mtime, decreasing = TRUE)][1]
+}
 
-PY         <- get_env_or("GESTURE_PY",    "<PATH_TO_PYTHON_EXECUTABLE>")
-task_path  <- get_env_or("GESTURE_TASK",  "<PATH_TO_MEDIAPIPE_TASK>.task")
-proj_root  <- get_env_or("GESTURE_ROOT",  "<PATH_TO_PROJECT_ROOT>")
-
-# Reticulate uses this python
-Sys.setenv(RETICULATE_PYTHON = PY)
-
+if (is.null(video_path) || !nzchar(video_path)) {
+  seg_dir <- file.path(proj_root, "segments")
+  if (!dir.exists(seg_dir)) stop("Missing segments/ folder at: ", seg_dir, call. = FALSE)
+  
+  cand <- list.files(seg_dir,
+                     pattern = paste0("^", tag, "_.*\\.mp4$"),
+                     full.names = TRUE)
+  video_path <- pick_newest(cand)
+  
+  if (is.na(video_path)) {
+    stop("No video found for tag=", tag, " in segments/.\n",
+         "Expected filename like: ", tag, "_....mp4", call. = FALSE)
+  }
+} else {
+  # allow relative path
+  if (!grepl("^[A-Za-z]:[/\\\\]", video_path)) {
+    video_path <- file.path(proj_root, video_path)
+  }
+}
 
 # ----------------------------
-# (1) OUTPUT PATH (auto)
+# (0.4) Locate MediaPipe task file (portable)
+# ----------------------------
+find_task <- function(root) {
+  candidates <- c(
+    file.path(root, "scripts", "pose_landmarker_full.task"),
+    file.path(root, "assets",  "pose_landmarker_full.task"),
+    file.path(root, "pose_landmarker_full.task")
+  )
+  hit <- candidates[file.exists(candidates)]
+  if (length(hit) == 0) {
+    stop("Cannot find pose_landmarker_full.task.\nTried:\n  - ",
+         paste(candidates, collapse = "\n  - "),
+         call. = FALSE)
+  }
+  hit[[1]]
+}
+task_path <- find_task(proj_root)
+
+# ----------------------------
+# (0.5) HARD CHECKS (DO NOT EDIT)
+# ----------------------------
+if (!file.exists(video_path)) stop("Missing video: ", video_path, call. = FALSE)
+
+base_name <- basename(video_path)
+tag_inferred <- sub("^((m[0-9]{2})).*$", "\\1", base_name)
+
+if (!grepl("^m[0-9]{2}$", tag_inferred)) {
+  stop("Cannot infer tag from video filename.\n",
+       "Expected filename starting with mXX_, got: ", base_name,
+       call. = FALSE)
+}
+
+if (tag != tag_inferred) {
+  stop("TAG mismatch detected.\n",
+       "  tag        = ", tag, "\n",
+       "  video_path = ", video_path, "\n",
+       "  inferred   = ", tag_inferred, "\n\n",
+       "Fix: set tag <- \"", tag_inferred, "\" OR choose the correct video_path.",
+       call. = FALSE)
+}
+
+cat("[OK] project_root:", proj_root, "\n")
+cat("[OK] video       :", video_path, "\n")
+cat("[OK] tag         :", tag, "\n")
+cat("[OK] task        :", task_path, "\n")
+
+# ----------------------------
+# (1) OUTPUT PATH (repo-local)
 # ----------------------------
 export_dir <- file.path(proj_root, "exports", "wrist_tracks")
 dir.create(export_dir, showWarnings = FALSE, recursive = TRUE)
+
 out_csv <- file.path(export_dir, paste0("wrist_tracks_", tag, ".csv"))
+cat("[WRITE]", out_csv, "\n")
 
 # SAFETY: avoid PermissionError (file locked by Excel)
 if (file.exists(out_csv)) {
   ok_rm <- tryCatch({ file.remove(out_csv) }, error = function(e) FALSE)
-  if (!isTRUE(ok_rm)) stop("[Script1] Cannot overwrite CSV (maybe open in Excel?):\n  ", out_csv, call. = FALSE)
+  if (!isTRUE(ok_rm)) stop("Cannot overwrite CSV (maybe open in Excel?): ", out_csv, call. = FALSE)
 }
 
 # ----------------------------
-# (2) RETICULATE SETUP
-# ----------------------------
-Sys.setenv(RETICULATE_PYTHON = PY)
-reticulate::use_python(PY, required = TRUE)
-
-# ----------------------------
-# (3) PYTHON SCRIPT (as a string)
+# (2) PYTHON SCRIPT (as a string)
 # ----------------------------
 py_code <- sprintf('
 import os, csv
@@ -83,7 +163,7 @@ TASK_PATH  = r"%s"
 # ----------------------------
 # CONFIG (stable defaults)
 # ----------------------------
-yolo_model_name  = "yolov8n.pt"
+yolo_model_name  = "yolov8n.pt"   # ultralytics will auto-download/cache if missing
 person_class_id  = 0
 
 det_conf         = 0.25
@@ -129,9 +209,7 @@ def clamp_box(box, w, h):
 def empty_landmarks():
     return [""] * (6*4)
 
-# ----------------------------
 # INIT MODELS
-# ----------------------------
 yolo = YOLO(yolo_model_name)
 
 base_options = mp_python.BaseOptions(model_asset_path=TASK_PATH)
@@ -142,9 +220,7 @@ options = mp_vision.PoseLandmarkerOptions(
 )
 pose = mp_vision.PoseLandmarker.create_from_options(options)
 
-# ----------------------------
 # OPEN VIDEO
-# ----------------------------
 cap = cv2.VideoCapture(VIDEO_PATH)
 if not cap.isOpened():
     raise RuntimeError(f"Cannot open video: {VIDEO_PATH}")
@@ -158,9 +234,7 @@ print("VIDEO:", VIDEO_PATH)
 print("FPS:", fps, "W,H:", w, h, "Frames:", n_frames)
 print("OUT:", OUT_CSV)
 
-# ----------------------------
-# CSV HEADER (final stable schema)
-# ----------------------------
+# CSV HEADER
 header = [
     "frame","t_sec","teacher_id",
     "conf_det","x1","y1","x2","y2",
@@ -223,8 +297,8 @@ with open(OUT_CSV, "w", newline="", encoding="utf-8") as fout:
         prev_teacher_box = chosen_box
 
         x1,y1,x2,y2 = map(int, chosen_box)
-
         crop = frame[y1:y2, x1:x2].copy()
+
         if crop.size == 0:
             row = [frame_i, t_sec, teacher_id, chosen_conf, x1,y1,x2,y2, w, h, fps, n_frames] + empty_landmarks()
             writer.writerow(row)
@@ -262,11 +336,10 @@ print("DONE ->", OUT_CSV)
 ', video_path, out_csv, task_path)
 
 # ----------------------------
-# (4) RUN PYTHON
+# (3) RUN PYTHON
 # ----------------------------
 py_file <- tempfile(fileext = ".py")
 writeLines(py_code, py_file, useBytes = TRUE)
 reticulate::py_run_file(py_file)
 
-cat("✅ Finished. CSV at:\n", out_csv, "\n")
-
+cat("Finished. CSV at:", out_csv, "\n")
