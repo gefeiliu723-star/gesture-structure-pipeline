@@ -1,30 +1,24 @@
 # ============================================================
 # 02_define_gestures.R  (FINAL+DEBUG / dplyr-1.1+ SAFE)
-#
-# Input  : exports/wrist_tracks/wrist_tracks_<TAG>.csv  (default)
-#          or pose_csv/wrist_tracks_<TAG>.csv
-#          or exports/<TAG>/wrist_tracks_<TAG>.csv
-#
-# Output : exports/<TAG>/:
+# Input : wrist_tracks_<TAG>.csv
+# Output (exports/<TAG>/):
 #   - gesture_events_<TAG>.csv
 #   - summary_<TAG>.csv
 #   - robust_<TAG>.csv
 #   - debug_missing_reason_<TAG>_q<q>.csv
 #
-# Usage:
-#   Rscript scripts/02_define_gestures.R
-#   Rscript scripts/02_define_gestures.R m08
-#   Rscript scripts/02_define_gestures.R m08 30 0.94 3
-#
-# Optional env var:
-#   GESTURE_PROJECT_ROOT=/path/to/repo_root
+# GitHub-ready:
+#   - No absolute paths
+#   - Project root from env var GESTURE_PROJECT_ROOT (fallback: getwd())
+#   - Auto-find input wrist_tracks_<TAG>.csv
+#   - Optional CLI: Rscript scripts/02_define_gestures.R m02 30 0.94 3
 # ============================================================
 
 suppressPackageStartupMessages({
   library(readr)
   library(dplyr)
-  library(stringr)
   library(tibble)
+  library(stringr)
 })
 
 # ----------------------------
@@ -32,15 +26,16 @@ suppressPackageStartupMessages({
 # ----------------------------
 args <- commandArgs(trailingOnly = TRUE)
 
-TAG <- if (length(args) >= 1) args[[1]] else "m01"
+TAG <- if (length(args) >= 1) args[[1]] else "m02"      # <-- change per video
 fps <- if (length(args) >= 2) as.integer(args[[2]]) else 30L
 
-q_main   <- if (length(args) >= 3) as.numeric(args[[3]]) else 0.94
-min_len  <- if (length(args) >= 4) as.integer(args[[4]]) else 3L
+q_main  <- if (length(args) >= 3) as.numeric(args[[3]]) else 0.94
+min_len <- if (length(args) >= 4) as.integer(args[[4]]) else 3L
+
 q_robust <- c(0.94, 0.95, 0.96)
 
 # ----------------------------
-# (0.1) PORTABLE PROJECT PATHS
+# (0.1) PROJECT ROOT (portable)
 # ----------------------------
 proj_root <- Sys.getenv("GESTURE_PROJECT_ROOT", unset = getwd())
 
@@ -49,7 +44,7 @@ exports_dir  <- file.path(exports_root, TAG)
 dir.create(exports_dir, showWarnings = FALSE, recursive = TRUE)
 
 # ----------------------------
-# (0.2) LOCATE INPUT wrist_tracks_<TAG>.csv
+# (0.2) Locate input wrist_tracks_<TAG>.csv (auto)
 # ----------------------------
 find_wrist_tracks <- function(root, tag) {
   candidates <- c(
@@ -62,8 +57,11 @@ find_wrist_tracks <- function(root, tag) {
   if (length(hit) == 0) {
     stop(
       "Cannot find wrist tracks CSV for TAG=", tag, "\n",
-      "Tried:\n  - ", paste(candidates, collapse = "\n  - "), "\n",
-      "Tip: run from repo root or set env var GESTURE_PROJECT_ROOT."
+      "Tried:\n  - ", paste(candidates, collapse = "\n  - "), "\n\n",
+      "Fix:\n",
+      "  (1) Run from repo root, OR\n",
+      "  (2) set env var: GESTURE_PROJECT_ROOT=/path/to/repo_root\n",
+      call. = FALSE
     )
   }
   hit[[1]]
@@ -126,7 +124,7 @@ dat2 <- dat %>%
 video_minutes <- max(dat2$t_sec, na.rm = TRUE) / 60
 
 # ----------------------------
-# (3) EVENT EXTRACTION (SAFE)
+# (3) EVENT EXTRACTION (SAFE + dplyr-1.1 CLEAN)
 # ----------------------------
 extract_events <- function(data, q, min_len, fps) {
   
@@ -147,16 +145,20 @@ extract_events <- function(data, q, min_len, fps) {
     filter(above) %>%
     group_by(run) %>%
     reframe(
-      start_frame     = min(frame),
-      end_frame       = max(frame),
-      duration_frames = n(),
-      start_sec       = min(t_sec),
-      end_sec         = max(t_sec),
+      start_frame     = min(frame, na.rm = TRUE),
+      end_frame       = max(frame, na.rm = TRUE),
+      duration_frames = dplyr::n(),
+      start_sec       = min(t_sec, na.rm = TRUE),
+      end_sec         = max(t_sec, na.rm = TRUE),
       duration_sec    = duration_frames / fps,
+      
       mean_speed      = mean(hand_speed, na.rm = TRUE),
       max_speed       = max(hand_speed, na.rm = TRUE),
-      peak_frame      = frame[which.max(replace(hand_speed, is.na(hand_speed), -Inf))],
-      peak_sec        = t_sec[which.max(replace(hand_speed, is.na(hand_speed), -Inf))]
+      
+      # peak (forced scalar)
+      peak_idx        = which.max(replace(hand_speed, is.na(hand_speed), -Inf))[1],
+      peak_frame      = frame[peak_idx][1],
+      peak_sec        = t_sec[peak_idx][1]
     ) %>%
     filter(duration_frames >= min_len) %>%
     arrange(start_sec) %>%
@@ -174,6 +176,12 @@ extract_events <- function(data, q, min_len, fps) {
       peak_frame, peak_sec, peak_sec_proxy,
       q, threshold
     )
+  
+  # FAIL-SAFE: one row per run
+  events <- events %>% distinct(run, .keep_all = TRUE)
+  
+  dup <- events %>% count(run) %>% filter(n > 1)
+  if (nrow(dup) > 0) stop("Duplicate rows per run detected (should never happen).")
   
   events
 }
@@ -213,21 +221,20 @@ debug_windows <- dat2 %>%
     win_id = floor(t_sec / win_sec)
   ) %>%
   group_by(win_id) %>%
-  summarise(
+  reframe(
     TAG = TAG,
     q = q_main,
     threshold = thr_main,
     t_start = min(t_sec, na.rm = TRUE),
     t_end   = max(t_sec, na.rm = TRUE),
-    n_frames = n(),
+    n_frames = dplyr::n(),
     na_rate = mean(hand_na),
     teacher_off_rate = mean(teacher_off),
     above_thr_rate = mean(above_thr),
     max_run_above = {
       r <- rle(above_thr)
       if (any(r$values)) max(r$lengths[r$values]) else 0L
-    },
-    .groups = "drop"
+    }
   ) %>%
   mutate(
     missing_reason = case_when(
@@ -239,6 +246,7 @@ debug_windows <- dat2 %>%
     )
   )
 
+# mark ANY window overlapped by an event as has_event
 event_win_ids <- integer()
 if (nrow(gesture_events) > 0) {
   event_win_ids <- unique(unlist(mapply(
@@ -283,3 +291,4 @@ cat("\nSaved:\n",
     "debug  :", out_debug_csv,   "\n")
 
 cat("DONE:", TAG, "\n")
+
