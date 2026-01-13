@@ -32,6 +32,7 @@ Statistical estimation of gesture density enrichment near discourse-structural b
 ### Analytic Orchestration
 A bifurcated R / Python architecture (via `reticulate`) that produces serialized data tables and diagnostic workbooks for downstream statistical modeling.
 
+---
 
 ## Data Governance & Privacy
 
@@ -46,6 +47,7 @@ No data are transmitted to external servers.
 ### Schema Consistency
 The pipeline interfaces with standardized annotation formats (e.g., CSV or ELAN-style discourse markers) while remaining agnostic to annotation semantics.
 
+---
 
 ## Reproducibility & Portability
 
@@ -60,6 +62,7 @@ Given identical kinematic inputs and hyper-parameters (e.g., quantile thresholds
 An empty Excel template defining alignment structure and formulas is provided in `templates/`.  
 No data or annotations are embedded.
 
+---
 
 ## Dependencies
 
@@ -80,6 +83,7 @@ No data or annotations are embedded.
 The pipeline uses YOLOv8 for person detection.  
 Pretrained weights (e.g., `yolov8n.pt`) are automatically downloaded by the Ultralytics package at runtime and are not included in this repository.
 
+---
 
 ## Installation
 
@@ -90,19 +94,36 @@ This repository is intended for research use rather than turnkey deployment.
 3. Configure environment variables or local paths for user-provided datasets
 4. Execute scripts sequentially following the pipeline order documented in `scripts/`
 
-The downstream analysis stage requires a single alignment workbook located at
-`exports/<tag>/<tag>_alignment.xlsx`.
+The downstream analysis stage requires a single alignment workbook located at:
 
-Analysis results are written to a tag-specific subdirectory under `results/`,  
-which does **not** need to exist in advance and will be created automatically.
+`exports/<tag>/<tag>_alignment.xlsx`
+
+Analysis results are written to a tag-specific subdirectory under `results/`, which does **not** need to exist in advance and will be created automatically.
+
+---
+
+## Architecture
+
+An R-centric pipeline with Python computer vision modules integrated through reticulate, enabling a fully R-native workflow without requiring direct interaction with Python code.
+
+### Unified R–Python Architecture
+
+The pipeline utilizes a unified R–Python architecture via `reticulate`.  
+By bridging YOLOv8 and MediaPipe directly into the R environment, the framework enables in-memory data transfer, ensuring a seamless flow from raw video to statistical modeling without the overhead of intermediate files.
+
+---
 
 ## Ethics & Compliance
 
 Users are responsible for ensuring that application of this pipeline complies with institutional IRB protocols, GDPR / FERPA regulations, and informed-consent requirements governing the source footage.
 
+---
+
 ## License
 
 This project is released under the MIT License.
+
+---
 
 ## Citation
 
