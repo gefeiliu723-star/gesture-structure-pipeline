@@ -6,9 +6,11 @@
 
 ## Overview
 
-This repository hosts an end-to-end computational framework for quantifying the **temporal alignment between manual kinematics and discourse-structural organization** in naturalistic instructional settings.
+This project introduces an automated, reproducible pipeline for examining the **temporal alignment between teacher kinematics and instructional discourse**. By integrating **computer vision** with **signal processing**, MKAP shifts analysis away from categorical gesture labeling toward the **objective measurement of rhythmic behavioral enrichment** around discourse-structural nodes.
 
-By integrating **computer vision** with **signal processing**, MKAP shifts analysis away from categorical gesture labeling toward the **objective measurement of rhythmic behavioral enrichment** around discourse-structural nodes.
+Pilot analyses indicate that gesture events are significantly enriched (p < .001) near discourse-structural boundaries, suggesting that gesture serves as an externalized "punctuation" for instructional logic.
+
+
 ## Pipeline Overview
 
 ![MKAP Pipeline](mkap_pipeline_flow.png)
@@ -31,6 +33,20 @@ Statistical estimation of gesture density enrichment near discourse-structural b
 
 ### Analytic Orchestration
 A bifurcated R / Python architecture (via `reticulate`) that produces serialized data tables and diagnostic workbooks for downstream statistical modeling.
+
+---
+
+## Robustness Analysis (Confidence-Based Filtering)
+
+Confidence-based filtering is used solely as a robustness analysis on the quality of structural annotations, not as a criterion for defining discourse structure itself.
+
+Structural points are manually assigned a confidence score (1–3) reflecting annotation clarity
+
+Primary analyses use all structural points
+
+Robustness checks repeat analyses using only high-confidence points (e.g., confidence = 3)
+
+This procedure evaluates sensitivity to annotation quality, not alignment rules or event definitions
 
 ---
 
