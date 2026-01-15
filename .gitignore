@@ -21,30 +21,55 @@ __pycache__/
 Thumbs.db
 *.swp
 *.swo
+.vscode/
+.idea/
 
 ############################################################
 # Environment / secrets
 ############################################################
 .env
+.env.*
 
 ############################################################
-# Large models / binaries
+# Large models / binaries (DO NOT TRACK)
 ############################################################
 scripts/yolov8*.pt
+*.pt
+*.onnx
 
 ############################################################
-# Data outputs (DO NOT TRACK)
+# Local datasets / media (DO NOT TRACK)
 ############################################################
-exports/**
-results/
-review_clips/
 segments/
+review_clips/
 pose_csv/
+*.mp4
+*.mov
+*.avi
+*.mkv
 
 ############################################################
-# KEEP required template + folder placeholders
+# Outputs (DO NOT TRACK)
 ############################################################
-!exports/alignment_template_with_formulas.xlsx
+results/
+exports/**
+
+############################################################
+# KEEP: templates + folder placeholders (critical)
+# (Need to unignore parent dirs, otherwise negation can fail)
+############################################################
+!exports/
 !exports/.gitkeep
+
+!exports/wrist_tracks/
 !exports/wrist_tracks/.gitkeep
 
+!exports/alignment_template_with_formulas.xlsx
+
+############################################################
+# Optional: keep only code in exports/<TAG>/ but ignore generated files
+# (If you ever decide to commit per-tag configs, do it here)
+############################################################
+# !exports/*/
+# exports/*/*.csv
+# exports/*/*.xlsx
