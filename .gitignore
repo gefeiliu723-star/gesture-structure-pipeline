@@ -33,9 +33,9 @@ Thumbs.db
 ############################################################
 # Large models / binaries (DO NOT TRACK)
 ############################################################
-scripts/yolov8*.pt
 *.pt
 *.onnx
+scripts/yolov8*.pt
 
 ############################################################
 # Local datasets / media (DO NOT TRACK)
@@ -43,6 +43,7 @@ scripts/yolov8*.pt
 segments/
 review_clips/
 pose_csv/
+
 *.mp4
 *.mov
 *.avi
@@ -55,8 +56,8 @@ results/
 exports/**
 
 ############################################################
-# KEEP: templates + folder placeholders (critical)
-# (Need to unignore parent dirs, otherwise negation can fail)
+# KEEP: required templates + folder placeholders
+# (Important: unignore parent dirs FIRST)
 ############################################################
 !exports/
 !exports/.gitkeep
@@ -67,9 +68,10 @@ exports/**
 !exports/alignment_template_with_formulas.xlsx
 
 ############################################################
-# Optional: keep only code in exports/<TAG>/ but ignore generated files
-# (If you ever decide to commit per-tag configs, do it here)
+# Optional: per-TAG fine control (disabled by default)
 ############################################################
+# If someday you want to version-control configs inside exports/<TAG>/:
+#
 # !exports/*/
 # exports/*/*.csv
 # exports/*/*.xlsx
