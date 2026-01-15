@@ -40,13 +40,13 @@ A bifurcated R / Python architecture (via `reticulate`) that produces serialized
 
 Confidence-based filtering is used solely as a robustness analysis on the quality of structural annotations, not as a criterion for defining discourse structure itself.
 
-Structural points are manually assigned a confidence score (1–3) reflecting annotation clarity
+Structural points are manually assigned a confidence score (1–3) reflecting annotation clarity.
 
-Primary analyses use all structural points
+Primary analyses use all structural points.
 
-Robustness checks repeat analyses using only high-confidence points (e.g., confidence = 3)
+Robustness checks repeat analyses using only high-confidence points (e.g., confidence = 3).
 
-This procedure evaluates sensitivity to annotation quality, not alignment rules or event definitions
+This procedure evaluates sensitivity to annotation quality, not alignment rules or event definitions.
 
 ---
 
