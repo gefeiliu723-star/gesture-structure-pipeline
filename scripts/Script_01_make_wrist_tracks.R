@@ -1,40 +1,51 @@
-# ============================================================
-# Script 01 (GitHub-ready):
-# Segment mp4 -> YOLO teacher box -> MediaPipe Pose -> CSV
+## ============================================================
+# Script 01 (CLEAN / GitHub-ready):
+# Extract wrist_tracks_<TAG>.csv from segments/<TAG>*.mp4
 #
-# Input:
-#   segments/<tag>_*.mp4   (default auto-pick newest)
-# Output:
-#   exports/wrist_tracks/wrist_tracks_<tag>.csv
+# INPUT:
+#   segments/<TAG>_*.mp4  (auto pick newest)  OR a relative path you provide
+#   scripts/pose_landmarker_full.task (preferred) / assets/... / root ...
 #
-# Key:
-#   - HARD CHECK: tag must match video filename prefix mXX_
-#   - No absolute paths; uses env vars:
-#       GESTURE_PROJECT_ROOT (optional, default: getwd())
-#       RETICULATE_PYTHON or MP_PYTHON (required unless already configured)
-# ============================================================
+# OUTPUT:
+#   exports/wrist_tracks/wrist_tracks_<TAG>.csv
+#
+# CLI:
+#   Rscript scripts/01_extract_wrist_tracks.R <TAG> [video_rel_path_or_empty] [fps]
+#
+# ROOT:
+#   GESTURE_PROJECT_ROOT env var; fallback getwd() (run from repo root)
+#
+# PYTHON:
+#   Set ONE of:
+#     Sys.setenv(RETICULATE_PYTHON=".../python")
+#     Sys.setenv(MP_PYTHON=".../python")
+## ============================================================
 
 suppressPackageStartupMessages({
+  library(stringr)
   library(reticulate)
 })
 
 # ----------------------------
-# (0) USER SETTINGS (EDIT ONLY HERE)
+# (0) SETTINGS / CLI (TAG REQUIRED)
 # ----------------------------
-tag <- "m03"  # MUST match video filename prefix (m03_...)
+args <- commandArgs(trailingOnly = TRUE)
 
-# Option A (recommended): leave NULL to auto-pick newest segments/<tag>_*.mp4
-video_path <- NULL
+if (length(args) < 1 || !nzchar(args[[1]])) {
+  stop(
+    "Missing TAG.\n",
+    "Usage:\n  Rscript scripts/01_extract_wrist_tracks.R <TAG> [video_rel_path_or_empty] [fps]\n",
+    call. = FALSE
+  )
+}
 
-# Option B: specify a relative path under project root, e.g.
-# video_path <- "segments/m03_XXXX_30fps_....mp4"
+tag <- args[[1]]
+video_path_rel <- if (length(args) >= 2 && nzchar(args[[2]])) args[[2]] else ""
+fps_user <- if (length(args) >= 3 && nzchar(args[[3]])) suppressWarnings(as.numeric(args[[3]])) else NA_real_
 
-# Python env: set ONE of these env vars before running:
-#   Sys.setenv(RETICULATE_PYTHON=".../python.exe")
-#   Sys.setenv(MP_PYTHON=".../python.exe")   # alternative
-#
-# If you insist to hardcode (not recommended), you can set:
-# PY <- "path/to/python.exe"
+if (!grepl("^m[0-9]{2}$", tag)) {
+  stop("TAG must look like mXX (e.g., m03). Got: ", tag, call. = FALSE)
+}
 
 # ----------------------------
 # (0.1) PROJECT ROOT (portable)
@@ -53,7 +64,7 @@ if (nzchar(PY)) {
 }
 
 # ----------------------------
-# (0.3) Locate video (auto)
+# (0.3) Locate video (auto newest, or user-provided relative path)
 # ----------------------------
 pick_newest <- function(files) {
   files <- files[file.exists(files)]
@@ -61,23 +72,32 @@ pick_newest <- function(files) {
   files[order(file.info(files)$mtime, decreasing = TRUE)][1]
 }
 
-if (is.null(video_path) || !nzchar(video_path)) {
+if (!nzchar(video_path_rel)) {
   seg_dir <- file.path(proj_root, "segments")
   if (!dir.exists(seg_dir)) stop("Missing segments/ folder at: ", seg_dir, call. = FALSE)
   
-  cand <- list.files(seg_dir,
-                     pattern = paste0("^", tag, "_.*\\.mp4$"),
-                     full.names = TRUE)
+  cand <- list.files(
+    seg_dir,
+    pattern = paste0("^", tag, "_.*\\.mp4$"),
+    full.names = TRUE,
+    ignore.case = TRUE
+  )
   video_path <- pick_newest(cand)
   
   if (is.na(video_path)) {
-    stop("No video found for tag=", tag, " in segments/.\n",
-         "Expected filename like: ", tag, "_....mp4", call. = FALSE)
+    stop(
+      "No video found for tag=", tag, " in segments/.\n",
+      "Expected filename like: ", tag, "_....mp4",
+      call. = FALSE
+    )
   }
 } else {
-  # allow relative path
-  if (!grepl("^[A-Za-z]:[/\\\\]", video_path)) {
-    video_path <- file.path(proj_root, video_path)
+  # allow relative path under root
+  if (grepl("^[A-Za-z]:[/\\\\]", video_path_rel) || startsWith(video_path_rel, "/")) {
+    # absolute given (allowed, but not recommended)
+    video_path <- video_path_rel
+  } else {
+    video_path <- file.path(proj_root, video_path_rel)
   }
 }
 
@@ -92,9 +112,11 @@ find_task <- function(root) {
   )
   hit <- candidates[file.exists(candidates)]
   if (length(hit) == 0) {
-    stop("Cannot find pose_landmarker_full.task.\nTried:\n  - ",
-         paste(candidates, collapse = "\n  - "),
-         call. = FALSE)
+    stop(
+      "Cannot find pose_landmarker_full.task.\nTried:\n  - ",
+      paste(candidates, collapse = "\n  - "),
+      call. = FALSE
+    )
   }
   hit[[1]]
 }
@@ -109,18 +131,22 @@ base_name <- basename(video_path)
 tag_inferred <- sub("^((m[0-9]{2})).*$", "\\1", base_name)
 
 if (!grepl("^m[0-9]{2}$", tag_inferred)) {
-  stop("Cannot infer tag from video filename.\n",
-       "Expected filename starting with mXX_, got: ", base_name,
-       call. = FALSE)
+  stop(
+    "Cannot infer tag from video filename.\n",
+    "Expected filename starting with mXX_, got: ", base_name,
+    call. = FALSE
+  )
 }
 
 if (tag != tag_inferred) {
-  stop("TAG mismatch detected.\n",
-       "  tag        = ", tag, "\n",
-       "  video_path = ", video_path, "\n",
-       "  inferred   = ", tag_inferred, "\n\n",
-       "Fix: set tag <- \"", tag_inferred, "\" OR choose the correct video_path.",
-       call. = FALSE)
+  stop(
+    "TAG mismatch detected.\n",
+    "  tag        = ", tag, "\n",
+    "  video_path = ", video_path, "\n",
+    "  inferred   = ", tag_inferred, "\n\n",
+    "Fix: run with tag=", tag_inferred, " OR choose the correct video.",
+    call. = FALSE
+  )
 }
 
 cat("[OK] project_root:", proj_root, "\n")
@@ -144,8 +170,11 @@ if (file.exists(out_csv)) {
 }
 
 # ----------------------------
-# (2) PYTHON SCRIPT (as a string)
+# (2) PYTHON SCRIPT (as string)
 # ----------------------------
+# NOTE: we do NOT force fps inside python; we read actual fps from video.
+# If user supplies fps, we will only use it to compute t_sec in R? (not needed).
+# We'll keep python as-is but leave user fps unused (cleaner).
 py_code <- sprintf('
 import os, csv
 import cv2
@@ -160,10 +189,7 @@ VIDEO_PATH = r"%s"
 OUT_CSV    = r"%s"
 TASK_PATH  = r"%s"
 
-# ----------------------------
-# CONFIG (stable defaults)
-# ----------------------------
-yolo_model_name  = "yolov8n.pt"   # ultralytics will auto-download/cache if missing
+yolo_model_name  = "yolov8n.pt"
 person_class_id  = 0
 
 det_conf         = 0.25
@@ -173,7 +199,6 @@ min_box_area     = 0.01
 smooth_alpha     = 0.7
 iou_keep_thres   = 0.15
 
-# joints (MediaPipe PoseLandmarker indices)
 idx = {"ls": 11, "rs": 12, "le": 13, "re": 14, "lw": 15, "rw": 16}
 
 def box_iou(a, b):
@@ -209,7 +234,6 @@ def clamp_box(box, w, h):
 def empty_landmarks():
     return [""] * (6*4)
 
-# INIT MODELS
 yolo = YOLO(yolo_model_name)
 
 base_options = mp_python.BaseOptions(model_asset_path=TASK_PATH)
@@ -220,7 +244,6 @@ options = mp_vision.PoseLandmarkerOptions(
 )
 pose = mp_vision.PoseLandmarker.create_from_options(options)
 
-# OPEN VIDEO
 cap = cv2.VideoCapture(VIDEO_PATH)
 if not cap.isOpened():
     raise RuntimeError(f"Cannot open video: {VIDEO_PATH}")
@@ -234,7 +257,6 @@ print("VIDEO:", VIDEO_PATH)
 print("FPS:", fps, "W,H:", w, h, "Frames:", n_frames)
 print("OUT:", OUT_CSV)
 
-# CSV HEADER
 header = [
     "frame","t_sec","teacher_id",
     "conf_det","x1","y1","x2","y2",
