@@ -1,22 +1,19 @@
 # ============================================================
-# 02_define_gestures.R  (CLEAN / dplyr-1.1+ SAFE)
+# 02_define_gestures.R  (GitHub-ready / NO LOCAL PATH / NO TAG EDIT)
 #
-# Input (auto-located):
-#   exports/wrist_tracks/wrist_tracks_<TAG>.csv   (preferred)
-#   exports/<TAG>/wrist_tracks_<TAG>.csv          (fallback)
-#   pose_csv/wrist_tracks_<TAG>.csv               (legacy fallback)
+# RUN:
+#   Rscript scripts/02_define_gestures.R path/to/wrist_tracks_m02.csv
 #
-# Output (exports/<TAG>/):
-#   - gesture_events_<TAG>.csv
-#   - summary_<TAG>.csv
-#   - robust_<TAG>.csv
-#   - debug_missing_reason_<TAG>_q<q>.csv
+# Optional:
+#   Rscript scripts/02_define_gestures.R path/to/wrist_tracks_m02.csv 30 0.94 3
 #
-# GitHub-ready:
-#   - No absolute paths
-#   - Project root from env var GESTURE_PROJECT_ROOT (fallback: getwd())
-#   - TAG is REQUIRED (no default)
-#   - CLI: Rscript scripts/02_define_gestures.R <TAG> [fps] [q_main] [min_len]
+# Output (fixed relative to repo):
+#   exports/<TAG>/
+#     - gesture_events_<TAG>.csv
+#     - summary_<TAG>.csv
+#     - robust_<TAG>.csv
+#     - debug_missing_reason_<TAG>_q<q>.csv
+#     - gesture_qc_<TAG>.csv
 # ============================================================
 
 suppressPackageStartupMessages({
@@ -27,66 +24,53 @@ suppressPackageStartupMessages({
 })
 
 # ----------------------------
-# (0) SETTINGS / CLI (TAG REQUIRED)
+# (0) CLI (NO TAG EDIT)
 # ----------------------------
 args <- commandArgs(trailingOnly = TRUE)
 
-if (length(args) < 1 || !nzchar(args[[1]])) {
+if (length(args) < 1) {
   stop(
-    "Missing TAG.\n",
-    "Usage:\n  Rscript scripts/02_define_gestures.R <TAG> [fps] [q_main] [min_len]\n",
+    "Usage:\n",
+    "  Rscript scripts/02_define_gestures.R <wrist_tracks_csv> [fps] [q_main] [min_len]\n\n",
+    "Example:\n",
+    "  Rscript scripts/02_define_gestures.R exports/wrist_tracks/wrist_tracks_m02.csv 30 0.94 3\n",
     call. = FALSE
   )
 }
 
-TAG <- args[[1]]
-if (!grepl("^m[0-9]{2}$", TAG)) {
-  stop("TAG must look like mXX (e.g., m03). Got: ", TAG, call. = FALSE)
-}
+csv_path <- args[[1]]
+fps      <- if (length(args) >= 2) as.numeric(args[[2]]) else 30
+q_main   <- if (length(args) >= 3) as.numeric(args[[3]]) else 0.94
+min_len  <- if (length(args) >= 4) as.integer(args[[4]]) else 3L
 
-fps    <- if (length(args) >= 2 && nzchar(args[[2]])) as.integer(args[[2]]) else 30L
-q_main <- if (length(args) >= 3 && nzchar(args[[3]])) as.numeric(args[[3]]) else 0.94
-min_len<- if (length(args) >= 4 && nzchar(args[[4]])) as.integer(args[[4]]) else 3L
+q_robust <- c(0.94, 0.95, 0.96)
 
 stopifnot(is.finite(fps), fps > 0)
 stopifnot(is.finite(q_main), q_main > 0, q_main < 1)
 stopifnot(is.finite(min_len), min_len >= 1)
 
-# robustness grid (edit if you want)
-q_robust <- c(0.94, 0.95, 0.96)
-
-# ----------------------------
-# (0.1) PROJECT ROOT (portable)
-# ----------------------------
-proj_root <- Sys.getenv("GESTURE_PROJECT_ROOT", unset = getwd())
-exports_root <- file.path(proj_root, "exports")
-exports_dir  <- file.path(exports_root, TAG)
-dir.create(exports_dir, showWarnings = FALSE, recursive = TRUE)
-
-# ----------------------------
-# (0.2) Locate wrist_tracks_<TAG>.csv (portable + strict)
-# ----------------------------
-find_wrist_tracks <- function(root, tag) {
-  candidates <- c(
-    file.path(root, "exports", "wrist_tracks", paste0("wrist_tracks_", tag, ".csv")),
-    file.path(root, "exports", tag,            paste0("wrist_tracks_", tag, ".csv")),
-    file.path(root, "pose_csv",                paste0("wrist_tracks_", tag, ".csv"))
-  )
-  hit <- candidates[file.exists(candidates)]
-  if (length(hit) == 0) {
-    stop(
-      "Cannot find wrist_tracks CSV for TAG=", tag, "\n",
-      "Tried:\n  - ", paste(candidates, collapse = "\n  - "), "\n\n",
-      "Fix:\n",
-      "  (1) Run from repo root, OR\n",
-      "  (2) set env var: GESTURE_PROJECT_ROOT=/path/to/repo_root\n",
-      call. = FALSE
-    )
-  }
-  hit[[1]]
+if (!file.exists(csv_path)) {
+  stop("Cannot find input CSV:\n  ", csv_path, call. = FALSE)
 }
 
-csv_path <- find_wrist_tracks(proj_root, TAG)
+# ----------------------------
+# (0.1) PROJECT ROOT (repo root)
+# ----------------------------
+# Prefer env var; fallback getwd().
+project_root <- Sys.getenv("GESTURE_PROJECT_ROOT", unset = "")
+if (!nzchar(project_root)) project_root <- getwd()
+exports_root <- file.path(project_root, "exports")
+
+# ----------------------------
+# (0.2) AUTO TAG (from filename)
+# ----------------------------
+# Try to parse something like wrist_tracks_m02.csv -> m02
+base <- basename(csv_path)
+tag_guess <- str_match(tolower(base), "wrist[_-]?tracks[_-]?([a-z0-9]+)\\.(csv|txt)$")[,2]
+TAG <- ifelse(!is.na(tag_guess) && nzchar(tag_guess), tag_guess, "tag")
+
+exports_dir <- file.path(exports_root, TAG)
+dir.create(exports_dir, showWarnings = FALSE, recursive = TRUE)
 
 # ----------------------------
 # OUTPUT PATHS
@@ -95,33 +79,43 @@ out_events_csv  <- file.path(exports_dir, paste0("gesture_events_", TAG, ".csv")
 out_summary_csv <- file.path(exports_dir, paste0("summary_", TAG, ".csv"))
 out_robust_csv  <- file.path(exports_dir, paste0("robust_", TAG, ".csv"))
 out_debug_csv   <- file.path(exports_dir, paste0("debug_missing_reason_", TAG, "_q", q_main, ".csv"))
+out_gesture_qc  <- file.path(exports_dir, paste0("gesture_qc_", TAG, ".csv"))
 
-message("Using wrist_tracks: ", normalizePath(csv_path, winslash = "/", mustWork = FALSE))
+cat("\n[INFO] project_root:", normalizePath(project_root, winslash = "/", mustWork = FALSE), "\n")
+cat("[INFO] input_csv   :", normalizePath(csv_path, winslash = "/", mustWork = FALSE), "\n")
+cat("[INFO] TAG         :", TAG, "\n")
+cat("[INFO] out_dir     :", normalizePath(exports_dir, winslash = "/", mustWork = FALSE), "\n\n")
 
 # ----------------------------
 # (1) READ + BASIC STRUCTURE
 # ----------------------------
-dat <- readr::read_csv(csv_path, show_col_types = FALSE, progress = FALSE)
+dat <- read_csv(csv_path, show_col_types = FALSE, progress = FALSE)
 
 if (!"frame" %in% names(dat)) dat <- dat %>% mutate(frame = row_number() - 1L)
-if (!"t_sec" %in% names(dat)) dat <- dat %>% mutate(t_sec = frame / fps)
-if (!"teacher_present" %in% names(dat)) dat <- dat %>% mutate(teacher_present = TRUE)
+if (!"t_sec" %in% names(dat))  dat <- dat %>% mutate(t_sec = frame / fps)
 
 needed <- c("lw_x","lw_y","rw_x","rw_y")
 miss <- setdiff(needed, names(dat))
 if (length(miss) > 0) stop("Missing columns: ", paste(miss, collapse = ", "), call. = FALSE)
 
-sanity <- dat %>%
-  summarise(
-    TAG = TAG,
-    total_frames = n(),
-    lw_detect_ratio = mean(!is.na(lw_x)),
-    rw_detect_ratio = mean(!is.na(rw_x)),
-    any_wrist_detect_ratio = mean(!is.na(lw_x) | !is.na(rw_x)),
-    teacher_present_ratio = mean(teacher_present),
-    .groups = "drop"
-  )
-print(sanity)
+# ----------------------------
+# (1.1) GESTURE SIGNAL QC
+# ----------------------------
+gesture_qc_tbl <- tibble(
+  TAG = TAG,
+  total_frames = nrow(dat),
+  lw_detect_ratio = mean(!is.na(dat$lw_x)),
+  rw_detect_ratio = mean(!is.na(dat$rw_x)),
+  any_wrist_detect_ratio = mean(!is.na(dat$lw_x) | !is.na(dat$rw_x)),
+  has_teacher_present_col = ("teacher_present" %in% names(dat)),
+  has_conf_det_col        = ("conf_det" %in% names(dat)),
+  has_ls_vis_col          = ("ls_vis" %in% names(dat)),
+  has_rs_vis_col          = ("rs_vis" %in% names(dat))
+)
+
+write_csv(gesture_qc_tbl, out_gesture_qc)
+cat("[QC] Saved:", out_gesture_qc, "\n")
+print(gesture_qc_tbl)
 
 # ----------------------------
 # (2) SPEED SIGNAL
@@ -138,17 +132,17 @@ dat2 <- dat %>%
     rw_speed = sqrt(rw_dx^2 + rw_dy^2) * fps,
     
     hand_speed = pmax(lw_speed, rw_speed, na.rm = TRUE),
-    hand_speed = ifelse(is.infinite(hand_speed), NA_real_, hand_speed)
+    hand_speed = ifelse(is.finite(hand_speed), hand_speed, NA_real_)
   )
 
 video_minutes <- max(dat2$t_sec, na.rm = TRUE) / 60
 
 # ----------------------------
-# (3) EVENT EXTRACTION (SAFE + dplyr-1.1)
+# (3) EVENT EXTRACTION
 # ----------------------------
 extract_events <- function(data, q, min_len, fps) {
   hs <- data$hand_speed
-  if (all(is.na(hs))) return(tibble())
+  if (length(hs) == 0 || all(is.na(hs))) return(tibble())
   
   thr <- suppressWarnings(as.numeric(quantile(hs, q, na.rm = TRUE, type = 7)))
   if (!is.finite(thr)) return(tibble())
@@ -157,18 +151,18 @@ extract_events <- function(data, q, min_len, fps) {
     arrange(frame) %>%
     mutate(
       above = !is.na(hand_speed) & hand_speed > thr,
-      run   = cumsum(above != lag(above, default = FALSE))
+      grp   = cumsum(above != lag(above, default = FALSE))
     )
   
-  events <- tmp %>%
+  tmp %>%
     filter(above) %>%
-    group_by(run) %>%
+    group_by(grp) %>%
     reframe(
-      start_frame     = min(frame, na.rm = TRUE),
-      end_frame       = max(frame, na.rm = TRUE),
+      start_frame     = min(frame),
+      end_frame       = max(frame),
       duration_frames = dplyr::n(),
-      start_sec       = min(t_sec, na.rm = TRUE),
-      end_sec         = max(t_sec, na.rm = TRUE),
+      start_sec       = min(t_sec),
+      end_sec         = max(t_sec),
       duration_sec    = duration_frames / fps,
       
       mean_speed      = mean(hand_speed, na.rm = TRUE),
@@ -187,54 +181,50 @@ extract_events <- function(data, q, min_len, fps) {
       threshold = thr
     ) %>%
     select(
-      EventID, run,
+      EventID, grp,
       start_frame, end_frame, duration_frames,
       start_sec, end_sec, duration_sec,
       mean_speed, max_speed,
       peak_frame, peak_sec, peak_sec_proxy,
       q, threshold
-    ) %>%
-    distinct(run, .keep_all = TRUE)
-  
-  dup <- events %>% count(run) %>% filter(n > 1)
-  if (nrow(dup) > 0) stop("Duplicate rows per run detected (should never happen).", call. = FALSE)
-  
-  events
+    )
 }
 
 # ----------------------------
 # (4) MAIN EVENTS + SUMMARY
 # ----------------------------
 gesture_events <- extract_events(dat2, q_main, min_len, fps)
-readr::write_csv(gesture_events, out_events_csv)
+write_csv(gesture_events, out_events_csv)
 
 summary_tbl <- tibble(
   TAG = TAG,
   q = q_main,
   n_events = nrow(gesture_events),
   events_per_min = ifelse(video_minutes > 0, nrow(gesture_events) / video_minutes, NA_real_),
-  mean_amplitude = mean(gesture_events$max_speed, na.rm = TRUE),
-  sd_amplitude   = sd(gesture_events$max_speed, na.rm = TRUE),
-  mean_duration  = mean(gesture_events$duration_sec, na.rm = TRUE),
-  sd_duration    = sd(gesture_events$duration_sec, na.rm = TRUE)
+  mean_amplitude = if (nrow(gesture_events) > 0) mean(gesture_events$max_speed, na.rm = TRUE) else NA_real_,
+  sd_amplitude   = if (nrow(gesture_events) > 1)  sd(gesture_events$max_speed, na.rm = TRUE) else NA_real_,
+  mean_duration  = if (nrow(gesture_events) > 0) mean(gesture_events$duration_sec, na.rm = TRUE) else NA_real_,
+  sd_duration    = if (nrow(gesture_events) > 1)  sd(gesture_events$duration_sec, na.rm = TRUE) else NA_real_
 )
-readr::write_csv(summary_tbl, out_summary_csv)
 
+write_csv(summary_tbl, out_summary_csv)
+
+cat("\n[EVENTS] Head:\n")
 print(head(gesture_events, 10))
+cat("\n[SUMMARY]\n")
 print(summary_tbl)
 
 # ----------------------------
-# (4.5) DEBUG: Missing-Event Diagnostics (window-based)
+# (4.5) DEBUG: Missing-Event Diagnostics (1s windows)
 # ----------------------------
-thr_main <- suppressWarnings(as.numeric(quantile(dat2$hand_speed, q_main, na.rm = TRUE, type = 7)))
 win_sec <- 1.0
+thr_main <- suppressWarnings(as.numeric(quantile(dat2$hand_speed, q_main, na.rm = TRUE, type = 7)))
 
 debug_windows <- dat2 %>%
   mutate(
     above_thr = is.finite(thr_main) & !is.na(hand_speed) & (hand_speed > thr_main),
-    hand_na = is.na(hand_speed),
-    teacher_off = !teacher_present,
-    win_id = floor(t_sec / win_sec)
+    hand_na   = is.na(hand_speed),
+    win_id    = floor(t_sec / win_sec)
   ) %>%
   group_by(win_id) %>%
   reframe(
@@ -245,7 +235,6 @@ debug_windows <- dat2 %>%
     t_end   = max(t_sec, na.rm = TRUE),
     n_frames = dplyr::n(),
     na_rate = mean(hand_na),
-    teacher_off_rate = mean(teacher_off),
     above_thr_rate = mean(above_thr),
     max_run_above = {
       r <- rle(above_thr)
@@ -255,7 +244,6 @@ debug_windows <- dat2 %>%
   mutate(
     missing_reason = case_when(
       na_rate > 0.30 ~ "NA_dropout",
-      teacher_off_rate > 0.30 ~ "teacher_gating",
       above_thr_rate < 0.10 ~ "below_threshold",
       max_run_above < min_len ~ "too_short",
       TRUE ~ "none"
@@ -277,11 +265,11 @@ debug_missing <- debug_windows %>%
   filter(!has_event) %>%
   arrange(t_start)
 
-readr::write_csv(debug_missing, out_debug_csv)
-cat("\n[DEBUG] Saved missing-reason table:\n", out_debug_csv, "\n")
+write_csv(debug_missing, out_debug_csv)
+cat("\n[DEBUG] Saved:", out_debug_csv, "\n")
 
 # ----------------------------
-# (5) ROBUSTNESS
+# (5) ROBUSTNESS GRID
 # ----------------------------
 robust_tbl <- bind_rows(lapply(q_robust, function(qq) {
   ev <- extract_events(dat2, qq, min_len, fps)
@@ -290,19 +278,20 @@ robust_tbl <- bind_rows(lapply(q_robust, function(qq) {
     q = qq,
     n_events = nrow(ev),
     events_per_min = ifelse(video_minutes > 0, nrow(ev) / video_minutes, NA_real_),
-    mean_amplitude = mean(ev$max_speed, na.rm = TRUE),
-    mean_duration  = mean(ev$duration_sec, na.rm = TRUE)
+    mean_amplitude = if (nrow(ev) > 0) mean(ev$max_speed, na.rm = TRUE) else NA_real_,
+    mean_duration  = if (nrow(ev) > 0) mean(ev$duration_sec, na.rm = TRUE) else NA_real_
   )
 }))
 
-readr::write_csv(robust_tbl, out_robust_csv)
+write_csv(robust_tbl, out_robust_csv)
+cat("[ROBUST] Saved:", out_robust_csv, "\n")
 print(robust_tbl)
 
-cat("\nSaved:\n",
-    "read   :", csv_path,        "\n",
-    "events :", out_events_csv,  "\n",
-    "summary:", out_summary_csv, "\n",
-    "robust :", out_robust_csv,  "\n",
-    "debug  :", out_debug_csv,   "\n")
-
+cat("\nSaved under:\n  ", normalizePath(exports_dir, winslash = "/", mustWork = FALSE), "\n",
+    "events      : ", basename(out_events_csv),  "\n",
+    "summary     : ", basename(out_summary_csv), "\n",
+    "robust      : ", basename(out_robust_csv),  "\n",
+    "debug       : ", basename(out_debug_csv),   "\n",
+    "gesture_qc  : ", basename(out_gesture_qc),  "\n",
+    sep = "")
 cat("DONE:", TAG, "\n")
