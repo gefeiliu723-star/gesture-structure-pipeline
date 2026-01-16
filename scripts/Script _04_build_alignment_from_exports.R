@@ -1,30 +1,28 @@
 # ============================================================
-# 04_build_alignment_from_template_with_formulas.R (FINAL CLEAN)
+# 04_build_alignment_from_template.R  (GitHub-ready / NO PATH / NO TAG EDIT)
+#   - DO NOT TOUCH Script 3
+#   - Methods countsflow computed from wrist_tracks + watch_points
 #
-# Clean rules:
-#   - TAG is REQUIRED (no default m02)
-#   - No absolute paths
-#   - Project root: env GESTURE_PROJECT_ROOT (fallback: getwd())
-#   - Template path MUST be provided:
-#       (1) CLI: --template path/to/template.xlsx
-#       (2) env: ALIGNMENT_TEMPLATE_XLSX=path/to/template.xlsx
-#     (No guessing template names)
+# RUN (recommended):
+#   Rscript scripts/04_build_alignment_from_template.R \
+#     exports/wrist_tracks/wrist_tracks_m10.csv \
+#     exports/m10/watch_points_m10_teacher.csv \
+#     exports/m10/gesture_events_m10.csv
 #
-# Inputs (expected under exports/<TAG>/):
-#   - gesture_events_<TAG>.csv
-#   - watch_points_<TAG>_teacher.csv   (or watch_points / structural_points variants)
-#   - teacher_qc_<TAG>.csv             (optional)
-#   - debug_missing_reason_<TAG>_q*.csv (optional)
-#   - robust_<TAG>.csv                 (optional; fills Robustness A:F)
-#   - wrist_tracks_<TAG>.csv           (optional; either exports/wrist_tracks/ or exports/<TAG>/)
+# Optional args:
+#   [fps] [dt_seconds]
+# Example:
+#   Rscript scripts/04_build_alignment_from_template.R \
+#     exports/wrist_tracks/wrist_tracks_m10.csv \
+#     exports/m10/watch_points_m10_teacher.csv \
+#     exports/m10/gesture_events_m10.csv 30 1.5
+#
+# Template auto-find:
+#   exports/_alignment_template_with_formulas.xlsx
+#   exports/alignment_template_with_formulas.xlsx
 #
 # Output:
-#   - exports/<TAG>/<TAG>_alignment.xlsx
-#
-# Usage:
-#   Rscript scripts/04_build_alignment_from_template_with_formulas.R <TAG> [fps] [dt_seconds] --template <xlsx>
-# Example:
-#   Rscript scripts/04_build_alignment_from_template_with_formulas.R m02 30 1.5 --template exports/my_any_name.xlsx
+#   exports/<TAG>/<TAG>_alignment.xlsx
 # ============================================================
 
 suppressPackageStartupMessages({
@@ -36,54 +34,87 @@ suppressPackageStartupMessages({
 })
 
 # ----------------------------
-# (0) ARGS (TAG required) + template required
+# (0) CLI (NO TAG EDIT)
 # ----------------------------
 args <- commandArgs(trailingOnly = TRUE)
 
-get_arg_value <- function(flag, args) {
-  i <- which(args == flag)
-  if (length(i) == 0) return(NA_character_)
-  if (i[[1]] >= length(args)) return(NA_character_)
-  args[[i[[1]] + 1]]
-}
-
-if (length(args) < 1 || !nzchar(args[[1]])) {
+if (length(args) < 3) {
   stop(
-    "Missing TAG.\n",
-    "Usage:\n  Rscript scripts/04_build_alignment_from_template_with_formulas.R <TAG> [fps] [dt_seconds] --template <xlsx>\n",
+    "Usage:\n",
+    "  Rscript scripts/04_build_alignment_from_template.R <wrist_tracks_csv> <watch_points_csv> <gesture_events_csv> [fps] [dt_seconds]\n\n",
+    "Example:\n",
+    "  Rscript scripts/04_build_alignment_from_template.R exports/wrist_tracks/wrist_tracks_m10.csv exports/m10/watch_points_m10_teacher.csv exports/m10/gesture_events_m10.csv 30 1.5\n",
     call. = FALSE
   )
 }
 
-TAG <- args[[1]]
-fps <- if (length(args) >= 2 && nzchar(args[[2]]) && args[[2]] != "--template") as.numeric(args[[2]]) else 30
-dt_seconds <- if (length(args) >= 3 && nzchar(args[[3]]) && args[[3]] != "--template") as.numeric(args[[3]]) else 1.5
+wrist_csv  <- args[[1]]
+watch_csv  <- args[[2]]
+gesture_csv <- args[[3]]
 
-stopifnot(is.finite(fps), fps > 0, is.finite(dt_seconds), dt_seconds > 0)
+fps        <- if (length(args) >= 4) as.numeric(args[[4]]) else 30
+dt_seconds <- if (length(args) >= 5) as.numeric(args[[5]]) else 1.5
+dt_grid    <- c(0.5, 1.0, 1.5)  # reserved (not used here)
 
-template_xlsx <- get_arg_value("--template", args)
-if (is.na(template_xlsx) || !nzchar(template_xlsx)) {
-  template_xlsx <- Sys.getenv("ALIGNMENT_TEMPLATE_XLSX", unset = NA_character_)
-}
-if (is.na(template_xlsx) || !nzchar(template_xlsx) || !file.exists(template_xlsx)) {
-  stop(
-    "Template not found.\n",
-    "Provide via:\n",
-    "  (1) CLI: --template <path>\n",
-    "  (2) env: ALIGNMENT_TEMPLATE_XLSX=<path>\n",
-    call. = FALSE
-  )
+stopifnot(is.finite(fps), fps > 0)
+stopifnot(is.finite(dt_seconds), dt_seconds > 0)
+
+for (p in c(wrist_csv, watch_csv, gesture_csv)) {
+  if (!file.exists(p)) stop("Missing input file:\n  ", p, call. = FALSE)
 }
 
 # ----------------------------
-# (0.1) PROJECT ROOT (portable)
+# (0.1) PROJECT ROOT (repo root)
 # ----------------------------
-project_root <- Sys.getenv("GESTURE_PROJECT_ROOT", unset = getwd())
+project_root <- Sys.getenv("GESTURE_PROJECT_ROOT", unset = "")
+if (!nzchar(project_root)) project_root <- getwd()
 exports_root <- file.path(project_root, "exports")
-tag_dir      <- file.path(exports_root, TAG)
+dir.create(exports_root, showWarnings = FALSE, recursive = TRUE)
+
+# ----------------------------
+# (0.2) AUTO TAG (from input filenames)
+# ----------------------------
+extract_tag <- function(path) {
+  b <- tolower(basename(path))
+  m <- str_match(b, "(_|-)m([0-9]+)\\b")[,2]
+  if (!is.na(m) && nzchar(m)) return(paste0("m", m))
+  # fallback: try wrist_tracks_<tag>.csv
+  m2 <- str_match(b, "wrist[_-]?tracks[_-]?([a-z0-9]+)\\.(csv|txt)$")[,2]
+  if (!is.na(m2) && nzchar(m2)) return(m2)
+  NA_character_
+}
+
+tag_candidates <- na.omit(c(extract_tag(wrist_csv), extract_tag(watch_csv), extract_tag(gesture_csv)))
+TAG <- if (length(tag_candidates) > 0) tag_candidates[[1]] else "tag"
+
+tag_dir <- file.path(exports_root, TAG)
 dir.create(tag_dir, showWarnings = FALSE, recursive = TRUE)
 
+# ----------------------------
+# (0.3) TEMPLATE (auto-find in exports/)
+# ----------------------------
+template_candidates <- c(
+  file.path(exports_root, "_alignment_template_with_formulas.xlsx"),
+  file.path(exports_root, "alignment_template_with_formulas.xlsx")
+)
+template_xlsx <- template_candidates[file.exists(template_candidates)][1]
+if (is.na(template_xlsx) || !nzchar(template_xlsx)) {
+  stop(
+    "Template not found in exports/. Tried:\n  - ",
+    paste(template_candidates, collapse = "\n  - "),
+    call. = FALSE
+  )
+}
+
 out_xlsx <- file.path(tag_dir, paste0(TAG, "_alignment.xlsx"))
+
+message("\n[INFO] project_root : ", normalizePath(project_root, winslash = "/", mustWork = FALSE))
+message("[INFO] TAG          : ", TAG)
+message("[INFO] Template     : ", normalizePath(template_xlsx, winslash = "/", mustWork = FALSE))
+message("[INFO] WristTracks  : ", normalizePath(wrist_csv, winslash = "/", mustWork = FALSE))
+message("[INFO] WatchPoints  : ", normalizePath(watch_csv, winslash = "/", mustWork = FALSE))
+message("[INFO] GestureEvents: ", normalizePath(gesture_csv, winslash = "/", mustWork = FALSE))
+message("[INFO] Output       : ", normalizePath(out_xlsx, winslash = "/", mustWork = FALSE), "\n")
 
 # ----------------------------
 # (1) HELPERS
@@ -97,54 +128,15 @@ std_names <- function(nms) {
     tolower()
 }
 
-stop_if_missing <- function(path, what = "path") {
-  if (!file.exists(path) && !dir.exists(path)) {
-    stop(sprintf("Missing %s: %s", what, path), call. = FALSE)
+apply_rename_map <- function(df, rename_map) {
+  for (old in names(rename_map)) {
+    new <- rename_map[[old]]
+    if (old %in% names(df) && !(new %in% names(df))) names(df)[names(df) == old] <- new
   }
-}
-
-pick_file <- function(dir, patterns, optional = FALSE) {
-  if (!dir.exists(dir)) {
-    if (optional) return(NA_character_)
-    stop("Folder not found: ", dir, call. = FALSE)
-  }
-  files <- list.files(dir, full.names = TRUE, recursive = FALSE)
-  if (length(files) == 0) {
-    if (optional) return(NA_character_)
-    stop("No files in: ", dir, call. = FALSE)
-  }
-  
-  low_base <- tolower(basename(files))
-  hit <- character(0)
-  for (pat in patterns) {
-    idx <- which(str_detect(low_base, pat))
-    if (length(idx) > 0) { hit <- files[idx]; break }
-  }
-  
-  if (length(hit) == 0) {
-    if (optional) return(NA_character_)
-    stop("Could not find file in ", dir, " with patterns: ",
-         paste(patterns, collapse = " | "), call. = FALSE)
-  }
-  
-  if (length(hit) > 1) {
-    hit <- hit[order(file.info(hit)$mtime, decreasing = TRUE)]
-  }
-  hit[[1]]
-}
-
-pick_file_multi <- function(dirs, patterns, optional = FALSE) {
-  for (d in dirs) {
-    p <- pick_file(d, patterns, optional = TRUE)
-    if (!is.na(p) && file.exists(p)) return(p)
-  }
-  if (optional) return(NA_character_)
-  stop("Could not find required file across dirs: ", paste(dirs, collapse = " , "),
-       " | patterns: ", paste(patterns, collapse = " | "), call. = FALSE)
+  df
 }
 
 safe_read_csv <- function(path) {
-  if (is.na(path) || !nzchar(path) || !file.exists(path)) return(NULL)
   readr::read_csv(path, show_col_types = FALSE, progress = FALSE)
 }
 
@@ -153,17 +145,6 @@ ensure_cols <- function(df, cols, default = NA) {
   df
 }
 
-apply_rename_map <- function(df, rename_map) {
-  for (old in names(rename_map)) {
-    new <- rename_map[[old]]
-    if (old %in% names(df) && !(new %in% names(df))) {
-      names(df)[names(df) == old] <- new
-    }
-  }
-  df
-}
-
-# write df under header row (row 1) without overwriting headers
 write_df_under_header <- function(wb, sheet, df,
                                   max_rows_to_clear = 2000,
                                   max_cols_to_clear = 60) {
@@ -178,7 +159,6 @@ write_df_under_header <- function(wb, sheet, df,
     startRow = 2, startCol = 1,
     colNames = FALSE, rowNames = FALSE
   )
-  
   openxlsx::writeData(
     wb, sheet,
     x = df,
@@ -189,86 +169,19 @@ write_df_under_header <- function(wb, sheet, df,
   invisible(TRUE)
 }
 
-num1 <- function(x) {
-  v <- suppressWarnings(as.numeric(x))
-  v <- v[is.finite(v)]
-  if (length(v) == 0) return(NA_real_)
-  v[[1]]
-}
-
 # ----------------------------
-# (2) LOCATE INPUT FILES
-# ----------------------------
-stop_if_missing(exports_root, "exports folder")
-stop_if_missing(tag_dir, paste0("exports/", TAG, " folder"))
-stop_if_missing(template_xlsx, "template xlsx")
-
-gesture_csv <- pick_file(
-  tag_dir,
-  patterns = c("^gesture_events_.*\\.csv$", "gesture.*events.*\\.csv$")
-)
-
-struct_csv <- pick_file(
-  tag_dir,
-  patterns = c("^watch_points_.*\\.csv$", "watch[_-]?points.*\\.csv$",
-               "^structural_points_.*\\.csv$", "structural[_-]?points.*\\.csv$")
-)
-
-wrist_csv <- pick_file_multi(
-  dirs = c(file.path(exports_root, "wrist_tracks"), tag_dir),
-  patterns = c(paste0("^wrist_tracks_", tolower(TAG), "\\.csv$"),
-               paste0("wrist[_-]?tracks.*", tolower(TAG), ".*\\.csv$")),
-  optional = TRUE
-)
-
-teacher_qc_csv <- pick_file(
-  tag_dir,
-  patterns = c("^teacher_qc_.*\\.csv$", "teacher[_-]?qc.*\\.csv$"),
-  optional = TRUE
-)
-
-debug_csv <- pick_file(
-  tag_dir,
-  patterns = c("^debug_missing_reason_.*\\.csv$", "debug[_-]?missing.*\\.csv$"),
-  optional = TRUE
-)
-
-robust_csv <- pick_file(
-  tag_dir,
-  patterns = c("^robust_.*\\.csv$", "robust.*\\.csv$"),
-  optional = TRUE
-)
-
-message("Using files:")
-message("  Template     : ", template_xlsx)
-message("  GestureEvents: ", gesture_csv)
-message("  StructuralPts: ", struct_csv)
-message("  WristTracks  : ", wrist_csv)
-message("  TeacherQC    : ", teacher_qc_csv)
-message("  DebugMissing : ", debug_csv)
-message("  Robust       : ", robust_csv)
-
-# ----------------------------
-# (3) READ + NORMALIZE TABLES
+# (2) READ + NORMALIZE
 # ----------------------------
 gesture_df <- safe_read_csv(gesture_csv)
-struct_df  <- safe_read_csv(struct_csv)
+struct_df  <- safe_read_csv(watch_csv)
 wrist_df   <- safe_read_csv(wrist_csv)
-qc_df      <- safe_read_csv(teacher_qc_csv)
-debug_df   <- safe_read_csv(debug_csv)
-robust_df  <- safe_read_csv(robust_csv)
-
-stopifnot(!is.null(gesture_df), !is.null(struct_df))
 
 names(gesture_df) <- std_names(names(gesture_df))
 names(struct_df)  <- std_names(names(struct_df))
-if (!is.null(wrist_df))  names(wrist_df)  <- std_names(names(wrist_df))
-if (!is.null(qc_df))     names(qc_df)     <- std_names(names(qc_df))
-if (!is.null(debug_df))  names(debug_df)  <- std_names(names(debug_df))
-if (!is.null(robust_df)) names(robust_df) <- std_names(names(robust_df))
+names(wrist_df)   <- std_names(names(wrist_df))
 
 # ----------------------------
-# (3A) GestureEvents schema
+# (2A) GestureEvents schema
 # ----------------------------
 expected_gesture <- c(
   "eventid","run","start_frame","end_frame","duration_frames",
@@ -280,8 +193,6 @@ expected_gesture <- c(
 
 gesture_df <- apply_rename_map(gesture_df, c(
   "event_id" = "eventid",
-  "eventid_" = "eventid",
-  "event_id_" = "eventid",
   "id" = "eventid",
   "mean_vel" = "mean_speed",
   "max_vel" = "max_speed",
@@ -289,29 +200,15 @@ gesture_df <- apply_rename_map(gesture_df, c(
   "peakframe" = "peak_frame"
 ))
 
-if (!("eventid" %in% names(gesture_df))) {
-  gesture_df$eventid <- sprintf("E%04d", seq_len(nrow(gesture_df)))
-}
-
-if (!("start_sec" %in% names(gesture_df)) && "start_frame" %in% names(gesture_df)) {
-  gesture_df$start_sec <- as.numeric(gesture_df$start_frame) / fps
-}
-if (!("end_sec" %in% names(gesture_df)) && "end_frame" %in% names(gesture_df)) {
-  gesture_df$end_sec <- as.numeric(gesture_df$end_frame) / fps
-}
-if (!("duration_sec" %in% names(gesture_df)) && all(c("start_sec","end_sec") %in% names(gesture_df))) {
-  gesture_df$duration_sec <- as.numeric(gesture_df$end_sec) - as.numeric(gesture_df$start_sec)
-}
-if (!("duration_frames" %in% names(gesture_df)) && all(c("start_frame","end_frame") %in% names(gesture_df))) {
-  gesture_df$duration_frames <- as.numeric(gesture_df$end_frame) - as.numeric(gesture_df$start_frame)
-}
+if (!("eventid" %in% names(gesture_df))) gesture_df$eventid <- sprintf("E%04d", seq_len(nrow(gesture_df)))
+if (!("start_sec" %in% names(gesture_df)) && "start_frame" %in% names(gesture_df)) gesture_df$start_sec <- as.numeric(gesture_df$start_frame) / fps
+if (!("end_sec" %in% names(gesture_df)) && "end_frame" %in% names(gesture_df)) gesture_df$end_sec <- as.numeric(gesture_df$end_frame) / fps
+if (!("duration_sec" %in% names(gesture_df)) && all(c("start_sec","end_sec") %in% names(gesture_df))) gesture_df$duration_sec <- as.numeric(gesture_df$end_sec) - as.numeric(gesture_df$start_sec)
+if (!("duration_frames" %in% names(gesture_df)) && all(c("start_frame","end_frame") %in% names(gesture_df))) gesture_df$duration_frames <- as.numeric(gesture_df$end_frame) - as.numeric(gesture_df$start_frame)
 
 if (!("peak_sec" %in% names(gesture_df))) {
-  if (all(c("start_sec","end_sec") %in% names(gesture_df))) {
-    gesture_df$peak_sec <- (as.numeric(gesture_df$start_sec) + as.numeric(gesture_df$end_sec)) / 2
-  } else {
-    gesture_df$peak_sec <- NA_real_
-  }
+  if (all(c("start_sec","end_sec") %in% names(gesture_df))) gesture_df$peak_sec <- (as.numeric(gesture_df$start_sec) + as.numeric(gesture_df$end_sec)) / 2
+  else gesture_df$peak_sec <- NA_real_
 }
 if (!("peak_sec_proxy" %in% names(gesture_df))) gesture_df$peak_sec_proxy <- as.numeric(gesture_df$peak_sec)
 if (!("peak_frame" %in% names(gesture_df))) gesture_df$peak_frame <- NA_real_
@@ -320,17 +217,17 @@ gesture_df <- ensure_cols(gesture_df, expected_gesture, default = NA) %>%
   select(all_of(expected_gesture)) %>%
   mutate(
     eventid = as.character(eventid),
-    peak_sec = as.numeric(peak_sec),
-    start_sec = as.numeric(start_sec),
-    end_sec = as.numeric(end_sec),
-    max_speed = as.numeric(max_speed),
-    duration_sec = as.numeric(duration_sec)
+    peak_sec = suppressWarnings(as.numeric(peak_sec)),
+    start_sec = suppressWarnings(as.numeric(start_sec)),
+    end_sec = suppressWarnings(as.numeric(end_sec)),
+    max_speed = suppressWarnings(as.numeric(max_speed)),
+    duration_sec = suppressWarnings(as.numeric(duration_sec))
   ) %>%
   distinct(eventid, .keep_all = TRUE) %>%
   arrange(peak_sec)
 
 # ----------------------------
-# (3B) StructuralPoints schema
+# (2B) WatchPoints schema
 # ----------------------------
 expected_struct <- c(
   "pointid","time_s","time_start","time_end",
@@ -343,16 +240,13 @@ struct_df <- apply_rename_map(struct_df, c(
   "time" = "time_s",
   "time_sec" = "time_s",
   "t_sec" = "time_s",
-  "t_struct_sec" = "time_s",
   "macro_code" = "macro",
   "micro" = "micro_codes",
   "confidence" = "confidence_1to3",
   "cue" = "transcript_cue"
 ))
 
-if (!("pointid" %in% names(struct_df))) {
-  struct_df$pointid <- sprintf("P%03d", seq_len(nrow(struct_df)))
-}
+if (!("pointid" %in% names(struct_df))) struct_df$pointid <- sprintf("P%03d", seq_len(nrow(struct_df)))
 if (!("time_start" %in% names(struct_df)) && "time_s" %in% names(struct_df)) struct_df$time_start <- struct_df$time_s
 if (!("time_end" %in% names(struct_df)) && "time_s" %in% names(struct_df)) struct_df$time_end <- struct_df$time_s
 
@@ -368,41 +262,64 @@ struct_df <- ensure_cols(struct_df, expected_struct, default = NA) %>%
   arrange(time_s)
 
 # ----------------------------
-# (4) AUTO-MATCH helper (dt parameter)
+# (2C) WristTracks checks (Methods countsflow)
 # ----------------------------
-match_one <- function(t_point, events_df, dt) {
-  if (!is.finite(t_point) || nrow(events_df) == 0) return(NULL)
-  lag_vec <- events_df$peak_sec - t_point
-  j <- which.min(abs(lag_vec))
-  ev <- events_df[j, , drop = FALSE]
-  lag <- as.numeric(ev$peak_sec) - t_point
-  ok <- is.finite(lag) && is.finite(dt) && abs(lag) <= dt
+# Script 3 gating params (MUST MATCH Script 3)
+conf_min         <- 0.35
+shoulder_vis_min <- 0.45
+shoulder_ok_mode <- "both"  # "both" or "either"
+
+need_wrist_cols <- c("conf_det", "ls_vis", "rs_vis")
+missing_wrist <- setdiff(need_wrist_cols, names(wrist_df))
+if (length(missing_wrist) > 0) {
+  stop("WristTracks missing required cols: ",
+       paste(missing_wrist, collapse = ", "),
+       "\nNeed conf_det, ls_vis, rs_vis (from Script 3 schema).",
+       call. = FALSE)
+}
+
+if (!("t_sec" %in% names(wrist_df))) {
+  if ("frame" %in% names(wrist_df)) wrist_df$t_sec <- as.numeric(wrist_df$frame) / fps
+  else wrist_df$t_sec <- NA_real_
+}
+
+# ----------------------------
+# (3) AUTO-MATCH (nearest peak within dt)
+# ----------------------------
+event_peaks <- gesture_df$peak_sec
+
+match_point <- function(t0) {
+  if (!is.finite(t0) || length(event_peaks) == 0 || all(!is.finite(event_peaks))) return(list(ok = FALSE))
+  j <- which.min(abs(event_peaks - t0))
+  lag <- as.numeric(event_peaks[j] - t0)
+  ok  <- is.finite(lag) && abs(lag) <= dt_seconds
+  if (!ok) return(list(ok = FALSE))
   
+  ev <- gesture_df[j, , drop = FALSE]
   list(
+    ok = TRUE,
     eventid = as.character(ev$eventid),
     event_peak_sec = as.numeric(ev$peak_sec),
-    lag_sec = as.numeric(lag),
+    lag_sec = lag,
     event_start_sec = as.numeric(ev$start_sec),
     event_end_sec = as.numeric(ev$end_sec),
     event_max_speed = as.numeric(ev$max_speed),
-    event_duration_sec = as.numeric(ev$duration_sec),
-    ok = ok
+    event_duration_sec = as.numeric(ev$duration_sec)
   )
 }
 
+m_list <- lapply(struct_df$time_s, match_point)
+
 aligned_tbl <- struct_df %>%
-  rowwise() %>%
-  mutate(.m = list(match_one(time_s, gesture_df, dt_seconds))) %>%
   mutate(
-    EventID_auto = ifelse(!is.null(.m) && .m$ok, .m$eventid, NA_character_),
-    event_peak_sec = ifelse(!is.null(.m) && .m$ok, .m$event_peak_sec, NA_real_),
-    lag_sec        = ifelse(!is.null(.m) && .m$ok, .m$lag_sec, NA_real_),
-    event_start_sec= ifelse(!is.null(.m) && .m$ok, .m$event_start_sec, NA_real_),
-    event_end_sec  = ifelse(!is.null(.m) && .m$ok, .m$event_end_sec, NA_real_),
-    event_max_speed= ifelse(!is.null(.m) && .m$ok, .m$event_max_speed, NA_real_),
-    event_duration_sec = ifelse(!is.null(.m) && .m$ok, .m$event_duration_sec, NA_real_)
+    EventID_auto = vapply(m_list, function(x) if (isTRUE(x$ok)) x$eventid else NA_character_, character(1)),
+    event_peak_sec = vapply(m_list, function(x) if (isTRUE(x$ok)) x$event_peak_sec else NA_real_, numeric(1)),
+    lag_sec        = vapply(m_list, function(x) if (isTRUE(x$ok)) x$lag_sec else NA_real_, numeric(1)),
+    event_start_sec= vapply(m_list, function(x) if (isTRUE(x$ok)) x$event_start_sec else NA_real_, numeric(1)),
+    event_end_sec  = vapply(m_list, function(x) if (isTRUE(x$ok)) x$event_end_sec else NA_real_, numeric(1)),
+    event_max_speed= vapply(m_list, function(x) if (isTRUE(x$ok)) x$event_max_speed else NA_real_, numeric(1)),
+    event_duration_sec = vapply(m_list, function(x) if (isTRUE(x$ok)) x$event_duration_sec else NA_real_, numeric(1))
   ) %>%
-  ungroup() %>%
   select(
     pointid, time_s,
     teacher_ratio, macro, micro_codes, confidence_1to3,
@@ -413,29 +330,26 @@ aligned_tbl <- struct_df %>%
   )
 
 # ----------------------------
-# (5) SUMMARY + COUNTSFLOW
+# (4) SUMMARY
 # ----------------------------
 q_val <- NA_real_
 if ("q" %in% names(gesture_df)) {
-  q_val <- suppressWarnings(as.numeric(gesture_df$q))
-  q_val <- q_val[is.finite(q_val)]
-  if (length(q_val) > 0) q_val <- q_val[[1]]
+  q_tmp <- suppressWarnings(as.numeric(gesture_df$q))
+  q_tmp <- q_tmp[is.finite(q_tmp)]
+  if (length(q_tmp) > 0) q_val <- q_tmp[[1]]
 }
 
 n_events <- nrow(gesture_df)
 
-total_sec <- NA_real_
-if (!is.null(wrist_df) && "t_sec" %in% names(wrist_df)) {
-  total_sec <- suppressWarnings(max(as.numeric(wrist_df$t_sec), na.rm = TRUE))
-}
-if (!is.finite(total_sec)) {
-  total_sec <- suppressWarnings(max(as.numeric(gesture_df$end_sec), na.rm = TRUE))
-}
+total_sec <- suppressWarnings(max(as.numeric(wrist_df$t_sec), na.rm = TRUE))
+if (!is.finite(total_sec)) total_sec <- suppressWarnings(max(as.numeric(gesture_df$end_sec), na.rm = TRUE))
 total_min <- total_sec / 60
 events_per_min <- ifelse(is.finite(total_min) && total_min > 0, n_events / total_min, NA_real_)
 
 mean_amp <- suppressWarnings(mean(as.numeric(gesture_df$max_speed), na.rm = TRUE))
+sd_amp   <- suppressWarnings(sd(as.numeric(gesture_df$max_speed), na.rm = TRUE))
 mean_dur <- suppressWarnings(mean(as.numeric(gesture_df$duration_sec), na.rm = TRUE))
+sd_dur   <- suppressWarnings(sd(as.numeric(gesture_df$duration_sec), na.rm = TRUE))
 
 summary_row <- tibble(
   TAG = TAG,
@@ -443,33 +357,30 @@ summary_row <- tibble(
   n_events = n_events,
   events_per_min = events_per_min,
   mean_amplitude = mean_amp,
-  mean_duration = mean_dur
+  sd_amplitude = sd_amp,
+  mean_duration = mean_dur,
+  sd_duration = sd_dur
 )
-
-countsflow <- list(
-  total_frames = NA_real_,
-  teacher_present_frames = NA_real_,
-  conf_ok_frames = NA_real_,
-  shoulders_ok_frames = NA_real_,
-  n_candidates = NA_real_,
-  n_watch_final = NA_real_
-)
-
-if (!is.null(qc_df) && nrow(qc_df) > 0) {
-  qc_nms <- names(qc_df)
-  if ("total_frames" %in% qc_nms) countsflow$total_frames <- num1(qc_df$total_frames)
-  if ("teacher_present_frames" %in% qc_nms) countsflow$teacher_present_frames <- num1(qc_df$teacher_present_frames)
-  if ("conf_ok_frames" %in% qc_nms) countsflow$conf_ok_frames <- num1(qc_df$conf_ok_frames)
-  if ("shoulders_ok_frames" %in% qc_nms) countsflow$shoulders_ok_frames <- num1(qc_df$shoulders_ok_frames)
-  if ("n_candidates" %in% qc_nms) countsflow$n_candidates <- num1(qc_df$n_candidates)
-  if ("n_watch_final" %in% qc_nms) countsflow$n_watch_final <- num1(qc_df$n_watch_final)
-}
-if (!is.null(wrist_df) && nrow(wrist_df) > 0 && !is.finite(countsflow$total_frames)) {
-  countsflow$total_frames <- nrow(wrist_df)
-}
 
 # ----------------------------
-# (6) LOAD TEMPLATE + WRITE
+# (4.1) COUNTSFLOW (Methods sheet)
+# ----------------------------
+conf_ok <- !is.na(wrist_df$conf_det) & (as.numeric(wrist_df$conf_det) >= conf_min)
+ls_ok   <- !is.na(wrist_df$ls_vis)   & (as.numeric(wrist_df$ls_vis)   >= shoulder_vis_min)
+rs_ok   <- !is.na(wrist_df$rs_vis)   & (as.numeric(wrist_df$rs_vis)   >= shoulder_vis_min)
+
+shoulders_ok <- if (shoulder_ok_mode == "either") (ls_ok | rs_ok) else (ls_ok & rs_ok)
+teacher_present <- conf_ok & shoulders_ok
+
+total_frames           <- nrow(wrist_df)
+conf_ok_frames         <- sum(conf_ok, na.rm = TRUE)
+shoulders_ok_frames    <- sum(shoulders_ok, na.rm = TRUE)
+teacher_present_frames <- sum(teacher_present, na.rm = TRUE)
+n_candidates           <- teacher_present_frames
+n_watch_final          <- nrow(struct_df)
+
+# ----------------------------
+# (5) LOAD TEMPLATE + WRITE
 # ----------------------------
 wb <- openxlsx::loadWorkbook(template_xlsx)
 
@@ -482,11 +393,11 @@ if ("Inputs" %in% names(wb)) {
 write_df_under_header(wb, "GestureEvents",    gesture_df, max_rows_to_clear = 3000,  max_cols_to_clear = 40)
 write_df_under_header(wb, "StructuralPoints", struct_df,  max_rows_to_clear = 2000,  max_cols_to_clear = 40)
 write_df_under_header(wb, "WristTracks",      wrist_df,   max_rows_to_clear = 60000, max_cols_to_clear = 80)
-write_df_under_header(wb, "DebugMissing",     debug_df,   max_rows_to_clear = 8000,  max_cols_to_clear = 50)
 
-# ----------------------------
-# (7) Alignment (write values only; keep template formulas elsewhere)
-# ----------------------------
+# DebugMissing is optional: only write if sheet exists AND user has a file
+# (We keep it simple: not required for running)
+# If you want to support it, pass a 4th csv path and write it here.
+
 if ("Alignment" %in% names(wb)) {
   n_points  <- nrow(aligned_tbl)
   start_row <- 2
@@ -494,12 +405,8 @@ if ("Alignment" %in% names(wb)) {
   
   cols_to_clear <- c(1,2,4,5,6,7,8,9,10,12,13,14,15)
   for (cc in cols_to_clear) {
-    openxlsx::writeData(
-      wb, "Alignment",
-      x = rep("", max_clear),
-      startCol = cc, startRow = start_row,
-      colNames = FALSE
-    )
+    openxlsx::writeData(wb, "Alignment", x = rep("", max_clear),
+                        startCol = cc, startRow = start_row, colNames = FALSE)
   }
   
   if (n_points > 0) {
@@ -526,77 +433,46 @@ if ("Summary" %in% names(wb)) {
 }
 
 if ("Methods" %in% names(wb)) {
-  openxlsx::writeData(wb, "Methods", x = TAG,        startCol = 3, startRow = 2, colNames = FALSE)
-  openxlsx::writeData(wb, "Methods", x = fps,        startCol = 3, startRow = 3, colNames = FALSE)
-  openxlsx::writeData(wb, "Methods", x = dt_seconds, startCol = 3, startRow = 4, colNames = FALSE)
+  openxlsx::writeData(wb, "Methods", x = TAG,        startCol = 3, startRow = 2,  colNames = FALSE)
+  openxlsx::writeData(wb, "Methods", x = fps,        startCol = 3, startRow = 3,  colNames = FALSE)
+  openxlsx::writeData(wb, "Methods", x = dt_seconds, startCol = 3, startRow = 4,  colNames = FALSE)
   
-  openxlsx::writeData(wb, "Methods", x = countsflow$total_frames,           startCol = 3, startRow = 5,  colNames = FALSE)
-  openxlsx::writeData(wb, "Methods", x = countsflow$teacher_present_frames, startCol = 3, startRow = 6,  colNames = FALSE)
-  openxlsx::writeData(wb, "Methods", x = countsflow$conf_ok_frames,         startCol = 3, startRow = 7,  colNames = FALSE)
-  openxlsx::writeData(wb, "Methods", x = countsflow$shoulders_ok_frames,    startCol = 3, startRow = 8,  colNames = FALSE)
-  openxlsx::writeData(wb, "Methods", x = countsflow$n_candidates,           startCol = 3, startRow = 9,  colNames = FALSE)
-  openxlsx::writeData(wb, "Methods", x = countsflow$n_watch_final,          startCol = 3, startRow = 10, colNames = FALSE)
+  openxlsx::writeData(wb, "Methods", x = total_frames,           startCol = 3, startRow = 5,  colNames = FALSE)
+  openxlsx::writeData(wb, "Methods", x = teacher_present_frames, startCol = 3, startRow = 6,  colNames = FALSE)
+  openxlsx::writeData(wb, "Methods", x = conf_ok_frames,         startCol = 3, startRow = 7,  colNames = FALSE)
+  openxlsx::writeData(wb, "Methods", x = shoulders_ok_frames,    startCol = 3, startRow = 8,  colNames = FALSE)
+  openxlsx::writeData(wb, "Methods", x = n_candidates,           startCol = 3, startRow = 9,  colNames = FALSE)
+  openxlsx::writeData(wb, "Methods", x = n_watch_final,          startCol = 3, startRow = 10, colNames = FALSE)
   
   openxlsx::writeData(wb, "Methods", x = n_events,       startCol = 3, startRow = 11, colNames = FALSE)
   openxlsx::writeData(wb, "Methods", x = events_per_min, startCol = 3, startRow = 12, colNames = FALSE)
   openxlsx::writeData(wb, "Methods", x = mean_amp,       startCol = 3, startRow = 13, colNames = FALSE)
 }
 
-# ----------------------------
-# (7B) Robustness sheet
-# Fill ONLY A:F from exports/<TAG>/robust_<TAG>.csv
-# Keep H:I (dt_seconds + Note) untouched.
-# ----------------------------
-if (!is.null(robust_df) && "Robustness" %in% names(wb)) {
+# Robustness table (optional)
+robust_csv <- file.path(tag_dir, paste0("robust_", TAG, ".csv"))
+if (file.exists(robust_csv) && "Robustness" %in% names(wb)) {
+  robust_df <- readr::read_csv(robust_csv, show_col_types = FALSE, progress = FALSE)
+  names(robust_df) <- std_names(names(robust_df))
   
-  # Expect columns from Script02 robust output:
-  # TAG,q,n_events,events_per_min,mean_amplitude,mean_duration
-  # Normalize & pick those six in order.
-  robust_df <- robust_df %>%
-    mutate(across(everything(), ~ .x)) # no-op, keep as tibble
-  
-  # ensure required columns exist (case normalized already)
-  need <- c("tag","q","n_events","events_per_min","mean_amplitude","mean_duration")
-  miss <- setdiff(need, names(robust_df))
-  if (length(miss) == 0) {
-    
-    out_r <- robust_df %>%
-      select(all_of(need)) %>%
-      mutate(tag = as.character(tag)) %>%
-      as.data.frame()
-    
-    start_row <- 2
-    max_clear <- max(100, nrow(out_r) + 20)
-    
-    # clear A:F only (1..6)
-    openxlsx::writeData(
-      wb, "Robustness",
-      x = matrix("", nrow = max_clear, ncol = 6),
-      startRow = start_row, startCol = 1,
-      colNames = FALSE, rowNames = FALSE
-    )
-    
-    # write A:F only, no headers (header already in template)
-    openxlsx::writeData(
-      wb, "Robustness",
-      x = out_r,
-      startRow = start_row, startCol = 1,
-      colNames = FALSE, rowNames = FALSE,
-      keepNA = TRUE
-    )
-    
-    message("Robustness A:F filled from: ", basename(robust_csv))
-  } else {
-    message("Robustness CSV found but missing required columns: ", paste(miss, collapse = ", "))
-  }
+  max_clear <- max(100, nrow(robust_df) + 20)
+  openxlsx::writeData(wb, "Robustness",
+                      x = matrix("", nrow = max_clear, ncol = ncol(robust_df)),
+                      startRow = 2, startCol = 1, colNames = FALSE, rowNames = FALSE)
+  openxlsx::writeData(wb, "Robustness",
+                      x = robust_df,
+                      startRow = 2, startCol = 1, colNames = FALSE, rowNames = FALSE, keepNA = TRUE)
 }
 
 # ----------------------------
-# (8) SAVE
+# (6) SAVE
 # ----------------------------
 openxlsx::saveWorkbook(wb, out_xlsx, overwrite = TRUE)
 
 matched_n <- sum(!is.na(aligned_tbl$EventID_auto))
-message("DONE -> ", normalizePath(out_xlsx, winslash = "/", mustWork = FALSE))
+
+message("\nDONE -> ", normalizePath(out_xlsx, winslash = "/", mustWork = FALSE))
 message(sprintf("AUTO-MATCH: %d points | matched %d within dt=%.3fs",
                 nrow(aligned_tbl), matched_n, dt_seconds))
+message(sprintf("Methods countsflow: total=%d | teacher_present=%d | conf_ok=%d | shoulders_ok=%d | n_candidates=%d | n_watch_final=%d",
+                total_frames, teacher_present_frames, conf_ok_frames, shoulders_ok_frames, n_candidates, n_watch_final))
