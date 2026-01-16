@@ -2,23 +2,11 @@
 # Script 05 (FINAL / CLEAN / GitHub-ready):
 # Time-based enrichment around structural points (4 runs)
 #
-# Observed:
-#   - Structural points = watch-point times (t_struct_sec) from alignment xlsx
-#     * PRIORITY: Alignment sheet (has Confidence)
-#     * fallback: StructuralPoints sheet (no Confidence -> conf3_only skipped)
-#   - Events = gesture event peaks (peak_sec or t_peak) from GestureEvents sheet
-#   - Stats: delta_rate = r_in - r_out (primary) ; lift = r_in / r_out (secondary)
-#
-# Nulls (run BOTH):
-#   1) global:
-#      sample n_points uniformly in [w, T_total-w]
-#   2) teacher_only:
-#      sample n_points uniformly ONLY within teacher-present time
-#      (teacher-present derived from wrist_tracks_<TAG>.csv)
-#
-# Pointsets (run BOTH when available):
-#   - all_points
-#   - conf3_only (requires Confidence in Alignment)
+# CLEAN RULES:
+#   - TAG is REQUIREDC (REQUIRED) / no default tag
+#   - No absolute/local machine paths
+#   - Root = Sys.getenv("GESTURE_PROJECT_ROOT", unset = getwd())
+#   - No template involvement (reads alignment xlsx only)
 #
 # INPUT:
 #   exports/<TAG>/<TAG>_alignment.xlsx
@@ -26,20 +14,12 @@
 #
 # OUTPUT:
 #   results/<TAG>/time_enrichment_<pointset>_<null_mode>/
-#     - <TAG>_summary_overall.csv
-#     - <TAG>_windows_union.csv
-#     - <TAG>_events_within_flags.csv
-#     - <TAG>_perm_overall.csv
-#     - <TAG>_allowed_intervals.csv
-#   plus:
 #   results/<TAG>/time_enrichment_MASTER_summary.csv
 #
-# CLI (optional):
-#   Rscript scripts/05_time_enrichment_FINAL_4runs.R m01 1.5 5000 1
-#     args: TAG, window_s, n_perm, seed
-#
-# PROJECT ROOT:
-#   Uses env var GESTURE_PROJECT_ROOT; fallback = getwd()
+# CLI:
+#   Rscript scripts/05_time_enrichment_FINAL_4runs.R <TAG> [window_s] [n_perm] [seed]
+# Example:
+#   Rscript scripts/05_time_enrichment_FINAL_4runs.R m02 1.5 5000 1
 # ============================================================
 
 suppressPackageStartupMessages({
@@ -51,14 +31,22 @@ suppressPackageStartupMessages({
 })
 
 # ----------------------------
-# (0) SETTINGS / CLI
+# (0) SETTINGS / CLI  (TAG REQUIRED)
 # ----------------------------
 args <- commandArgs(trailingOnly = TRUE)
 
-TAG      <- if (length(args) >= 1) args[[1]] else "m01"
-window_s <- if (length(args) >= 2) as.numeric(args[[2]]) else 1.5
-n_perm   <- if (length(args) >= 3) as.integer(args[[3]]) else 5000L
-seed     <- if (length(args) >= 4) as.integer(args[[4]]) else 1L
+if (length(args) < 1 || !nzchar(args[[1]])) {
+  stop(
+    "Missing TAG.\n",
+    "Usage:\n  Rscript scripts/05_time_enrichment_FINAL_4runs.R <TAG> [window_s] [n_perm] [seed]\n",
+    call. = FALSE
+  )
+}
+
+TAG      <- args[[1]]
+window_s <- if (length(args) >= 2 && nzchar(args[[2]])) as.numeric(args[[2]]) else 1.5
+n_perm   <- if (length(args) >= 3 && nzchar(args[[3]])) as.integer(args[[3]]) else 5000L
+seed     <- if (length(args) >= 4 && nzchar(args[[4]])) as.integer(args[[4]]) else 1L
 
 stopifnot(is.finite(window_s), window_s > 0)
 stopifnot(is.finite(n_perm), n_perm >= 100)
@@ -67,19 +55,26 @@ project_root <- Sys.getenv("GESTURE_PROJECT_ROOT", unset = getwd())
 exports_root <- file.path(project_root, "exports")
 results_root <- file.path(project_root, "results")
 
+align_xlsx <- file.path(exports_root, TAG, paste0(TAG, "_alignment.xlsx"))
+if (!file.exists(align_xlsx)) {
+  stop("Cannot find alignment xlsx: ", align_xlsx, call. = FALSE)
+}
+message("Using align_xlsx: ", normalizePath(align_xlsx, winslash = "/"))
+
 # ----------------------------
 # (1) HELPERS
 # ----------------------------
-clean_names <- function(nms) nms %>% str_replace_all("\\s+", " ") %>% str_trim()
-
-sheet_exists <- function(wb_path, sheet_name) {
-  sheet_name %in% openxlsx::getSheetNames(wb_path)
+std_names <- function(nms) {
+  nms %>%
+    str_replace_all("\\.+", "_") %>%
+    str_replace_all("[^A-Za-z0-9_]", "_") %>%
+    str_replace_all("_+", "_") %>%
+    str_replace_all("^_|_$", "") %>%
+    tolower()
 }
 
 pick_col <- function(df, candidates) {
   nms <- names(df)
-  hit <- candidates[candidates %in% nms]
-  if (length(hit) >= 1) return(hit[[1]])
   low <- tolower(nms)
   for (cand in candidates) {
     j <- which(low == tolower(cand))
@@ -87,6 +82,8 @@ pick_col <- function(df, candidates) {
   }
   NA_character_
 }
+
+as_num <- function(x) suppressWarnings(as.numeric(as.character(x)))
 
 make_windows <- function(times, w) {
   tibble(start = times - w, end = times + w) %>%
@@ -102,15 +99,13 @@ safe_clip_windows <- function(windows_df, t_min, t_max) {
 union_intervals <- function(df_intervals) {
   if (nrow(df_intervals) == 0) return(df_intervals)
   x <- df_intervals %>% arrange(start, end)
-  starts <- x$start
-  ends   <- x$end
   
   out_s <- numeric(0); out_e <- numeric(0)
-  cs <- starts[[1]]; ce <- ends[[1]]
+  cs <- x$start[[1]]; ce <- x$end[[1]]
   
-  if (length(starts) >= 2) {
-    for (i in 2:length(starts)) {
-      s <- starts[[i]]; e <- ends[[i]]
+  if (nrow(x) >= 2) {
+    for (i in 2:nrow(x)) {
+      s <- x$start[[i]]; e <- x$end[[i]]
       if (!is.finite(s) || !is.finite(e) || !is.finite(cs) || !is.finite(ce)) next
       if (s <= ce) ce <- max(ce, e)
       else {
@@ -154,10 +149,11 @@ flag_in_union <- function(peaks, union_df) {
 
 sample_from_intervals <- function(intervals_df, n) {
   stopifnot(n >= 1)
-  if (nrow(intervals_df) == 0) stop("No allowed intervals to sample from.")
+  if (nrow(intervals_df) == 0) stop("No allowed intervals to sample from.", call. = FALSE)
   lens <- pmax(0, intervals_df$end - intervals_df$start)
   total <- sum(lens)
-  if (total <= 0) stop("Allowed intervals total length <= 0.")
+  if (total <= 0) stop("Allowed intervals total length <= 0.", call. = FALSE)
+  
   u <- runif(n, min = 0, max = total)
   cum <- cumsum(lens)
   out <- numeric(n)
@@ -176,10 +172,10 @@ build_teacher_allowed_intervals <- function(wrist_csv, T_total, w,
   shoulder_ok_mode <- match.arg(shoulder_ok_mode)
   
   dat <- readr::read_csv(wrist_csv, show_col_types = FALSE)
-  names(dat) <- clean_names(names(dat))
+  names(dat) <- std_names(names(dat))
   
   col_t <- pick_col(dat, c("time_sec","t_sec","time_s","time"))
-  if (is.na(col_t)) stop("wrist_tracks missing time column (time_sec/t_sec/time).")
+  if (is.na(col_t)) stop("wrist_tracks missing time column (time_sec/t_sec/time).", call. = FALSE)
   
   t <- suppressWarnings(as.numeric(dat[[col_t]]))
   ok_t <- is.finite(t)
@@ -212,7 +208,7 @@ build_teacher_allowed_intervals <- function(wrist_csv, T_total, w,
   teacher_present <- teacher_present[ord]
   teacher_present[t < 0 | t > T_total] <- FALSE
   
-  if (!any(teacher_present)) stop("No teacher_present TRUE in wrist_tracks under current criteria.")
+  if (!any(teacher_present)) stop("No teacher_present TRUE in wrist_tracks under current criteria.", call. = FALSE)
   
   r <- rle(teacher_present)
   ends <- cumsum(r$lengths)
@@ -229,68 +225,58 @@ build_teacher_allowed_intervals <- function(wrist_csv, T_total, w,
     filter(end > start) %>%
     union_intervals()
   
-  if (interval_length(allowed) <= 0) stop("Teacher-only allowed time is zero after clipping.")
+  if (interval_length(allowed) <= 0) stop("Teacher-only allowed time is zero after clipping.", call. = FALSE)
   allowed
 }
 
 # ----------------------------
-# (2) Locate alignment xlsx
+# (2) READ SHEETS ONCE
 # ----------------------------
-cand_align <- c(
-  file.path(exports_root, TAG, paste0(TAG, "_alignment.xlsx")),
-  file.path(getwd(), "exports", TAG, paste0(TAG, "_alignment.xlsx")),
-  file.path(getwd(), paste0(TAG, "_alignment.xlsx"))
-)
-
-align_xlsx <- cand_align[file.exists(cand_align)][1]
-if (is.na(align_xlsx) || !nzchar(align_xlsx)) {
-  stop("Cannot find alignment xlsx. Tried:\n", paste(cand_align, collapse = "\n"))
-}
-message("Using align_xlsx: ", normalizePath(align_xlsx, winslash = "/"))
+sheets <- openxlsx::getSheetNames(align_xlsx)
 
 # ----------------------------
 # (3) Load points (Alignment-first; fallback StructuralPoints)
 # ----------------------------
-read_points_alignment_first <- function(xlsx) {
-  if (sheet_exists(xlsx, "Alignment")) {
+read_points_alignment_first <- function(xlsx, sheets_vec) {
+  if ("Alignment" %in% sheets_vec) {
     A <- openxlsx::read.xlsx(xlsx, sheet = "Alignment")
-    names(A) <- clean_names(names(A))
+    names(A) <- std_names(names(A))
     
     col_t    <- pick_col(A, c("t_struct_sec","t_sec","time_sec","time_s","time"))
-    col_pid  <- pick_col(A, c("PointID","pointid","point_id","id"))
-    col_conf <- pick_col(A, c("Confidence","conf","confidence"))
+    col_pid  <- pick_col(A, c("pointid","point_id","id"))
+    col_conf <- pick_col(A, c("confidence_1to3","confidence","conf"))
     
-    if (is.na(col_t)) stop("Alignment exists but missing t_struct_sec (or equivalent).")
+    if (is.na(col_t)) stop("Alignment exists but missing t_struct_sec (or equivalent).", call. = FALSE)
     
     points <- tibble(
       PointID = if (!is.na(col_pid)) as.character(A[[col_pid]]) else as.character(seq_len(nrow(A))),
-      t_struct_sec = suppressWarnings(as.numeric(A[[col_t]])),
-      Confidence = if (!is.na(col_conf)) suppressWarnings(as.numeric(A[[col_conf]])) else NA_real_
+      t_struct_sec = as_num(A[[col_t]]),
+      Confidence = if (!is.na(col_conf)) as_num(A[[col_conf]]) else NA_real_
     ) %>% filter(is.finite(t_struct_sec))
     
     list(points = points, conf_available = !is.na(col_conf), source = "Alignment")
-  } else if (sheet_exists(xlsx, "StructuralPoints")) {
+  } else if ("StructuralPoints" %in% sheets_vec) {
     SP <- openxlsx::read.xlsx(xlsx, sheet = "StructuralPoints")
-    names(SP) <- clean_names(names(SP))
+    names(SP) <- std_names(names(SP))
     
     col_t   <- pick_col(SP, c("t_struct_sec","t_sec","time_sec","time_s","time"))
-    col_pid <- pick_col(SP, c("PointID","pointid","point_id","id"))
+    col_pid <- pick_col(SP, c("pointid","point_id","id"))
     
-    if (is.na(col_t)) stop("StructuralPoints exists but missing t_struct_sec (or equivalent).")
+    if (is.na(col_t)) stop("StructuralPoints exists but missing t_struct_sec (or equivalent).", call. = FALSE)
     
     points <- tibble(
       PointID = if (!is.na(col_pid)) as.character(SP[[col_pid]]) else as.character(seq_len(nrow(SP))),
-      t_struct_sec = suppressWarnings(as.numeric(SP[[col_t]])),
+      t_struct_sec = as_num(SP[[col_t]]),
       Confidence = NA_real_
     ) %>% filter(is.finite(t_struct_sec))
     
     list(points = points, conf_available = FALSE, source = "StructuralPoints")
   } else {
-    stop("Neither Alignment nor StructuralPoints sheet exists.")
+    stop("Neither Alignment nor StructuralPoints sheet exists.", call. = FALSE)
   }
 }
 
-tmp <- read_points_alignment_first(align_xlsx)
+tmp <- read_points_alignment_first(align_xlsx, sheets)
 points_df <- tmp$points
 conf_available <- tmp$conf_available
 message("Points loaded from: ", tmp$source, " | conf_available=", conf_available)
@@ -305,21 +291,25 @@ points_conf3 <- if (conf_available) {
 # ----------------------------
 # (4) Load events (peaks)
 # ----------------------------
-if (!sheet_exists(align_xlsx, "GestureEvents")) stop("Missing sheet: GestureEvents")
+if (!("GestureEvents" %in% sheets)) stop("Missing sheet: GestureEvents", call. = FALSE)
+
 E <- openxlsx::read.xlsx(align_xlsx, sheet = "GestureEvents")
-names(E) <- clean_names(names(E))
+names(E) <- std_names(names(E))
 
-col_peak <- pick_col(E, c("peak_sec","t_peak","t_peak_sec","peak","peak_s"))
-if (is.na(col_peak)) stop("GestureEvents must contain peak_sec (or equivalent).")
-col_eid <- pick_col(E, c("EventID","eventid","EventId"))
+col_peak <- pick_col(E, c("peak_sec","t_peak","t_peak_sec","peak","peak_s","start_sec"))
+if (is.na(col_peak)) stop("GestureEvents must contain peak_sec (or equivalent).", call. = FALSE)
 
-peaks <- suppressWarnings(as.numeric(E[[col_peak]]))
+col_eid <- pick_col(E, c("eventid","event_id","eventid_auto","id"))
+
+peaks <- as_num(E[[col_peak]])
 peaks <- peaks[is.finite(peaks)]
-if (length(peaks) < 1) stop("No finite peaks in GestureEvents.")
+if (length(peaks) < 1) stop("No finite peaks in GestureEvents.", call. = FALSE)
 
 peaks_sorted <- sort(peaks)
-T_total <- max(peaks_sorted)
-if (!is.finite(T_total) || T_total <= 2 * window_s) stop("T_total too small relative to window_s.")
+
+# Use total duration from max(peaks, points) to be safe
+T_total <- max(c(peaks_sorted, points_all$t_struct_sec), na.rm = TRUE)
+if (!is.finite(T_total) || T_total <= 2 * window_s) stop("T_total too small relative to window_s.", call. = FALSE)
 
 make_events_flags <- function(in_flag_vec) {
   out <- tibble(peak_sec = peaks_sorted, in_struct_window = in_flag_vec)
@@ -327,10 +317,9 @@ make_events_flags <- function(in_flag_vec) {
   if (!is.na(col_eid)) {
     EE <- tibble(
       EventID = as.character(E[[col_eid]]),
-      peak_sec = suppressWarnings(as.numeric(E[[col_peak]]))
+      peak_sec = as_num(E[[col_peak]])
     ) %>% filter(is.finite(peak_sec)) %>% arrange(peak_sec)
     
-    # merge by peak_sec (safer than bind_cols if lengths differ)
     out <- EE %>%
       left_join(out, by = "peak_sec") %>%
       mutate(in_struct_window = ifelse(is.na(in_struct_window), FALSE, in_struct_window))
@@ -379,14 +368,9 @@ run_one <- function(pointset_name, t_struct_vec, null_mode) {
   if (null_mode == "global") {
     allowed_intervals <- tibble(start = window_s, end = T_total - window_s)
   } else {
-    wrist_candidates <- c(
-      file.path(exports_root, "wrist_tracks", paste0("wrist_tracks_", TAG, ".csv")),
-      file.path(exports_root, TAG, paste0("wrist_tracks_", TAG, ".csv"))
-    )
-    wrist_csv <- wrist_candidates[file.exists(wrist_candidates)][1]
-    if (is.na(wrist_csv) || !nzchar(wrist_csv)) {
-      stop("teacher_only requires wrist_tracks_<TAG>.csv. Tried:\n",
-           paste(wrist_candidates, collapse = "\n"))
+    wrist_csv <- file.path(exports_root, "wrist_tracks", paste0("wrist_tracks_", TAG, ".csv"))
+    if (!file.exists(wrist_csv)) {
+      stop("teacher_only requires: ", wrist_csv, call. = FALSE)
     }
     
     allowed_intervals <- build_teacher_allowed_intervals(
@@ -471,7 +455,6 @@ run_one <- function(pointset_name, t_struct_vec, null_mode) {
     p_value_plus1 = p_plus1
   )
   
-  # write
   readr::write_csv(summary_df, file.path(out_dir, paste0(TAG, "_summary_overall.csv")))
   readr::write_csv(union_obs %>% mutate(tag = TAG, pointset = pointset_name, window_s = window_s),
                    file.path(out_dir, paste0(TAG, "_windows_union.csv")))
@@ -492,11 +475,9 @@ run_one <- function(pointset_name, t_struct_vec, null_mode) {
 # ----------------------------
 master <- list()
 
-# all_points × (global, teacher_only)
 master[[length(master) + 1]] <- run_one("all_points",  points_all$t_struct_sec,  "global")
 master[[length(master) + 1]] <- run_one("all_points",  points_all$t_struct_sec,  "teacher_only")
 
-# conf3_only × (global, teacher_only) if available
 if (nrow(points_conf3) > 0) {
   master[[length(master) + 1]] <- run_one("conf3_only", points_conf3$t_struct_sec, "global")
   master[[length(master) + 1]] <- run_one("conf3_only", points_conf3$t_struct_sec, "teacher_only")
@@ -506,7 +487,6 @@ if (nrow(points_conf3) > 0) {
 
 master_df <- dplyr::bind_rows(master)
 
-# master summary
 tag_results_dir <- file.path(results_root, TAG)
 dir.create(tag_results_dir, recursive = TRUE, showWarnings = FALSE)
 master_out <- file.path(tag_results_dir, "time_enrichment_MASTER_summary.csv")
