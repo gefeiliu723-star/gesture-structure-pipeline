@@ -49,11 +49,19 @@ pose_csv/
 *.avi
 *.mkv
 
+# also ignore these folders anywhere they appear
+**/segments/
+**/review_clips/
+**/pose_csv/
+**/raw_videos/
+**/videos/
+**/data/
+
 ############################################################
 # Outputs (DO NOT TRACK)
 ############################################################
 results/
-exports/**
+exports/
 
 ############################################################
 # KEEP: required templates + folder placeholders
@@ -66,6 +74,15 @@ exports/**
 !exports/wrist_tracks/.gitkeep
 
 !exports/alignment_template_with_formulas.xlsx
+
+# archives & logs (often accidentally committed)
+*.zip
+*.7z
+*.tar
+*.gz
+*.log
+*.tmp
+
 
 ############################################################
 # Optional: per-TAG fine control (disabled by default)
