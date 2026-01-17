@@ -1,82 +1,74 @@
 # ============================================================
-# 02_define_gestures.R  (GitHub-clean / dplyr-1.1+ SAFE)
+# 02_define_gestures.R  (GitHub-ready / dplyr-1.1+ SAFE)
 #
-# Input  (fixed):
+# Input:
 #   exports/wrist_tracks/wrist_tracks_<TAG>.csv
 #
-# Output (fixed) -> exports/<TAG>/:
-#   - gesture_events_<TAG>.csv        (template-ready: peak-frame snapshot + event stats)
+# Output (exports/<TAG>/):
+#   - gesture_events_<TAG>.csv
 #   - summary_<TAG>.csv
 #   - robust_<TAG>.csv
-#   - debug_missing_reason_<TAG>_q<q>.csv   (path reserved; not written here)
+#   - debug_missing_reason_<TAG>_q<q>.csv   (WINDOW-LEVEL TABLE)
 #
-# CLI:
-#   Rscript scripts/02_define_gestures.R m02 30 0.94 3 0.94,0.95,0.96
+# Usage:
+#   Rscript scripts/02_define_gestures.R
+#   Rscript scripts/02_define_gestures.R l07
+#   Rscript scripts/02_define_gestures.R l07 30 0.94 3
 #
-# Env (optional):
+# Optional env var:
 #   GESTURE_PROJECT_ROOT=/path/to/repo_root
+#   (default: current working directory)
 # ============================================================
 
 suppressPackageStartupMessages({
   library(readr)
   library(dplyr)
   library(tibble)
-  library(stringr)
 })
 
 # ----------------------------
-# (0) SETTINGS (CLI or defaults)
+# (0) SETTINGS / CLI
 # ----------------------------
 args <- commandArgs(trailingOnly = TRUE)
 
-TAG <- if (length(args) >= 1 && nzchar(args[[1]])) args[[1]] else "m02"
-fps <- if (length(args) >= 2 && nzchar(args[[2]])) as.integer(args[[2]]) else 30L
-
-q_main  <- if (length(args) >= 3 && nzchar(args[[3]])) as.numeric(args[[3]]) else 0.94
-min_len <- if (length(args) >= 4 && nzchar(args[[4]])) as.integer(args[[4]]) else 3L
+TAG     <- if (length(args) >= 1) args[[1]] else "l07"
+fps     <- if (length(args) >= 2) suppressWarnings(as.numeric(args[[2]])) else 30
+q_main  <- if (length(args) >= 3) suppressWarnings(as.numeric(args[[3]])) else 0.94
+min_len <- if (length(args) >= 4) suppressWarnings(as.integer(args[[4]])) else 3L
 
 q_robust <- c(0.94, 0.95, 0.96)
-if (length(args) >= 5 && nzchar(args[[5]])) {
-  q_robust <- suppressWarnings(as.numeric(strsplit(args[[5]], ",", fixed = TRUE)[[1]]))
-  q_robust <- q_robust[is.finite(q_robust)]
-  if (length(q_robust) == 0) q_robust <- c(0.94, 0.95, 0.96)
-}
 
+stopifnot(is.character(TAG), nzchar(TAG))
 stopifnot(is.finite(fps), fps > 0)
 stopifnot(is.finite(q_main), q_main > 0, q_main < 1)
 stopifnot(is.finite(min_len), min_len >= 1)
 
-# project root (GitHub clean)
-project_root <- Sys.getenv("GESTURE_PROJECT_ROOT", unset = "")
-if (!nzchar(project_root)) project_root <- getwd()
-
+# ----------------------------
+# (0.1) PATHS (GitHub-ready)
+# ----------------------------
+project_root <- Sys.getenv("GESTURE_PROJECT_ROOT", unset = getwd())
 exports_root <- file.path(project_root, "exports")
-in_dir  <- file.path(exports_root, "wrist_tracks")
-csv_path <- file.path(in_dir, paste0("wrist_tracks_", TAG, ".csv"))
+wrist_dir    <- file.path(exports_root, "wrist_tracks")
+tag_dir      <- file.path(exports_root, TAG)
 
-exports_dir <- file.path(exports_root, TAG)
-dir.create(exports_dir, showWarnings = FALSE, recursive = TRUE)
+dir.create(tag_dir, showWarnings = FALSE, recursive = TRUE)
 
-out_events_csv  <- file.path(exports_dir, paste0("gesture_events_", TAG, ".csv"))
-out_summary_csv <- file.path(exports_dir, paste0("summary_", TAG, ".csv"))
-out_robust_csv  <- file.path(exports_dir, paste0("robust_", TAG, ".csv"))
-out_debug_csv   <- file.path(exports_dir, paste0("debug_missing_reason_", TAG, "_q", q_main, ".csv"))
-
+csv_path <- file.path(wrist_dir, paste0("wrist_tracks_", TAG, ".csv"))
 if (!file.exists(csv_path)) {
-  stop("Missing input: ", csv_path,
+  stop("Input not found: ", csv_path,
        "\nExpected: exports/wrist_tracks/wrist_tracks_<TAG>.csv",
-       "\nTAG=", TAG,
-       "\nproject_root=", project_root)
+       call. = FALSE)
 }
 
-message("TAG = ", TAG)
-message("Input : ", csv_path)
-message("Output: ", exports_dir)
+out_events_csv  <- file.path(tag_dir, paste0("gesture_events_", TAG, ".csv"))
+out_summary_csv <- file.path(tag_dir, paste0("summary_", TAG, ".csv"))
+out_robust_csv  <- file.path(tag_dir, paste0("robust_", TAG, ".csv"))
+out_debug_csv   <- file.path(tag_dir, paste0("debug_missing_reason_", TAG, "_q", q_main, ".csv"))
 
 # ----------------------------
 # (1) READ + BASIC STRUCTURE
 # ----------------------------
-dat <- read_csv(csv_path, show_col_types = FALSE)
+dat <- read_csv(csv_path, show_col_types = FALSE, progress = FALSE)
 
 if (!"frame" %in% names(dat)) dat <- dat %>% mutate(frame = row_number() - 1L)
 if (!"t_sec" %in% names(dat)) dat <- dat %>% mutate(t_sec = frame / fps)
@@ -84,11 +76,21 @@ if (!"teacher_present" %in% names(dat)) dat <- dat %>% mutate(teacher_present = 
 
 needed <- c("lw_x","lw_y","rw_x","rw_y")
 miss <- setdiff(needed, names(dat))
-if (length(miss) > 0) stop("Missing columns: ", paste(miss, collapse = ", "))
+if (length(miss) > 0) stop("Missing columns: ", paste(miss, collapse = ", "), call. = FALSE)
 
-# ADDED: n_frames (used by template fields)
+# n_frames (for template compatibility downstream)
 n_frames_val <- if ("n_frames" %in% names(dat)) suppressWarnings(as.numeric(dat$n_frames[1])) else NA_real_
 if (!is.finite(n_frames_val)) n_frames_val <- max(dat$frame, na.rm = TRUE) + 1L
+
+# ----------------------------
+# (1.5) SANITY COERCION
+# ----------------------------
+as_num_safe <- function(x) suppressWarnings(as.numeric(x))
+dat <- dat %>%
+  mutate(across(any_of(c("frame","t_sec","lw_x","lw_y","rw_x","rw_y")), as_num_safe))
+
+if (!all(is.finite(dat$frame))) stop("Non-finite values found in `frame` after coercion.", call. = FALSE)
+if (!all(is.finite(dat$t_sec))) stop("Non-finite values found in `t_sec` after coercion.", call. = FALSE)
 
 # ----------------------------
 # (2) SPEED SIGNAL
@@ -100,10 +102,8 @@ dat2 <- dat %>%
     lw_dy = lw_y - lag(lw_y),
     rw_dx = rw_x - lag(rw_x),
     rw_dy = rw_y - lag(rw_y),
-    
     lw_speed = sqrt(lw_dx^2 + lw_dy^2) * fps,
     rw_speed = sqrt(rw_dx^2 + rw_dy^2) * fps,
-    
     hand_speed = pmax(lw_speed, rw_speed, na.rm = TRUE),
     hand_speed = ifelse(is.infinite(hand_speed), NA_real_, hand_speed)
   )
@@ -111,10 +111,74 @@ dat2 <- dat %>%
 video_minutes <- max(dat2$t_sec, na.rm = TRUE) / 60
 
 # ----------------------------
-# (3) EVENT EXTRACTION (SAFE)  -- keep logic
+# (2.5) DEBUG MISSING (WINDOW-LEVEL TABLE)
+# columns:
+# win_id TAG q threshold t_start t_end n_frames
+# na_rate teacher_off_rate above_thr_rate max_run_above
+# missing_reason has_event
+# ----------------------------
+win_sec  <- 10
+step_sec <- 10
+win_n    <- max(1L, as.integer(round(win_sec * fps)))
+step_n   <- max(1L, as.integer(round(step_sec * fps)))
+
+teacher_present_vec <- dat2$teacher_present
+teacher_present_vec <- ifelse(is.na(teacher_present_vec), FALSE, as.logical(teacher_present_vec))
+
+hs <- dat2$hand_speed
+thr_main <- if (all(is.na(hs))) NA_real_ else as.numeric(quantile(hs, q_main, na.rm = TRUE, type = 7))
+
+max_run_len <- function(x) {
+  if (length(x) == 0) return(0L)
+  x <- as.logical(x)
+  if (all(!x, na.rm = TRUE)) return(0L)
+  r <- rle(x)
+  if (!any(r$values)) return(0L)
+  max(r$lengths[r$values], na.rm = TRUE)
+}
+
+N <- nrow(dat2)
+starts <- seq(1L, N, by = step_n)
+ends   <- pmin(starts + win_n - 1L, N)
+
+debug_missing_tbl <- bind_rows(lapply(seq_along(starts), function(i) {
+  s <- starts[[i]]
+  e <- ends[[i]]
+  w <- dat2[s:e, , drop = FALSE]
+  
+  n_frames <- nrow(w)
+  t_start  <- suppressWarnings(min(w$t_sec, na.rm = TRUE))
+  t_end    <- suppressWarnings(max(w$t_sec, na.rm = TRUE))
+  
+  hs_w <- w$hand_speed
+  na_rate <- mean(is.na(hs_w))
+  
+  tp_w <- teacher_present_vec[s:e]
+  teacher_off_rate <- mean(!tp_w)
+  
+  above <- if (!is.finite(thr_main)) rep(FALSE, n_frames) else (!is.na(hs_w) & hs_w > thr_main)
+  above_thr_rate <- mean(above)
+  max_run_above  <- max_run_len(above)
+  
+  tibble(
+    win_id = sprintf("W%04d", i),
+    TAG = TAG,
+    q = q_main,
+    threshold = thr_main,
+    t_start = t_start,
+    t_end = t_end,
+    n_frames = n_frames,
+    na_rate = na_rate,
+    teacher_off_rate = teacher_off_rate,
+    above_thr_rate = above_thr_rate,
+    max_run_above = max_run_above
+  )
+}))
+
+# ----------------------------
+# (3) EVENT EXTRACTION (SAFE)
 # ----------------------------
 extract_events <- function(data, q, min_len, fps) {
-  
   hs <- data$hand_speed
   if (all(is.na(hs))) return(tibble())
   
@@ -128,7 +192,7 @@ extract_events <- function(data, q, min_len, fps) {
       run   = cumsum(above != lag(above, default = FALSE))
     )
   
-  events <- tmp %>%
+  tmp %>%
     filter(above) %>%
     group_by(run) %>%
     reframe(
@@ -145,7 +209,6 @@ extract_events <- function(data, q, min_len, fps) {
     ) %>%
     filter(duration_frames >= min_len) %>%
     arrange(start_sec) %>%
-    # remove duplicated events (same window produced more than once)
     distinct(start_frame, end_frame, .keep_all = TRUE) %>%
     mutate(
       EventID = sprintf("E%04d", row_number()),
@@ -161,53 +224,82 @@ extract_events <- function(data, q, min_len, fps) {
       peak_frame, peak_sec, peak_sec_proxy,
       q, threshold
     )
-  
-  events
 }
 
 # ----------------------------
-# (4) MAIN EVENTS
+# (4) MAIN EVENTS + TEMPLATE ENRICH
 # ----------------------------
 gesture_events <- extract_events(dat2, q_main, min_len, fps)
 
-# build peak-frame snapshot columns for template
-template_cols <- c(
-  "frame","t_sec",
-  "teacher_id","conf_det","x1","y1","x2","y2","frame_w","frame_h",
-  "ls_x","ls_y","ls_z","ls_vis","rs_x","rs_y","rs_z","rs_vis",
-  "le_x","le_y","le_z","le_vis","re_x","re_y","re_z","re_vis",
-  "lw_x","lw_y","lw_z","lw_vis","rw_x","rw_y","rw_z","rw_vis"
-)
-# ensure missing cols exist (avoid select errors)
-for (nm in setdiff(template_cols, names(dat2))) dat2[[nm]] <- NA
-
-template_extra <- dat2 %>% select(any_of(template_cols))
+template_extra <- dat2 %>%
+  select(any_of(c(
+    "frame","t_sec",
+    "teacher_id","conf_det","x1","y1","x2","y2","frame_w","frame_h",
+    "ls_x","ls_y","ls_z","ls_vis","rs_x","rs_y","rs_z","rs_vis",
+    "le_x","le_y","le_z","le_vis","re_x","re_y","re_z","re_vis",
+    "lw_x","lw_y","lw_z","lw_vis","rw_x","rw_y","rw_z","rw_vis"
+  )))
 
 gesture_events_out <- gesture_events %>%
   left_join(template_extra, by = c("peak_frame" = "frame")) %>%
   mutate(
-    fps = as.integer(fps),
+    fps = fps,
     n_frames = n_frames_val,
-    frame = peak_frame,  # template wants peak frame
-    t_sec = peak_sec     # template wants peak t_sec
+    frame = peak_frame,
+    t_sec = peak_sec
   )
 
-# strict header order requested (template head first)
 template_head <- c(
   "EventID","frame","t_sec","teacher_id","conf_det","x1","y1","x2","y2","frame_w","frame_h","fps","n_frames",
   "ls_x","ls_y","ls_z","ls_vis","rs_x","rs_y","rs_z","rs_vis",
   "le_x","le_y","le_z","le_vis","re_x","re_y","re_z","re_vis",
   "lw_x","lw_y","lw_z","lw_vis","rw_x","rw_y","rw_z","rw_vis"
 )
-# keep your original event stats after template head
 keep_cols <- c(template_head, setdiff(names(gesture_events_out), template_head))
 gesture_events_out <- gesture_events_out %>% select(any_of(keep_cols))
 
 write_csv(gesture_events_out, out_events_csv)
-message("Saved: ", out_events_csv)
 
 # ----------------------------
-# SUMMARY
+# (4.1) FINALIZE DEBUG MISSING (has_event + missing_reason) + WRITE
+# ----------------------------
+if (nrow(debug_missing_tbl) > 0) {
+  if (nrow(gesture_events) == 0) {
+    debug_missing_tbl$has_event <- FALSE
+  } else {
+    ev_s <- as.numeric(gesture_events$start_sec)
+    ev_e <- as.numeric(gesture_events$end_sec)
+    
+    debug_missing_tbl$has_event <- vapply(seq_len(nrow(debug_missing_tbl)), function(i) {
+      ws <- as.numeric(debug_missing_tbl$t_start[i])
+      we <- as.numeric(debug_missing_tbl$t_end[i])
+      if (!is.finite(ws) || !is.finite(we)) return(FALSE)
+      any(is.finite(ev_s) & is.finite(ev_e) & (ev_s <= we) & (ev_e >= ws))
+    }, logical(1))
+  }
+  
+  debug_missing_tbl$missing_reason <- vapply(seq_len(nrow(debug_missing_tbl)), function(i) {
+    if (isTRUE(debug_missing_tbl$has_event[i])) return("has_event")
+    if (!is.finite(debug_missing_tbl$threshold[i])) return("threshold_non_finite_or_all_na")
+    if (isTRUE(debug_missing_tbl$na_rate[i] >= 0.95)) return("hand_speed_mostly_na")
+    if (isTRUE(debug_missing_tbl$teacher_off_rate[i] >= 0.95)) return("teacher_off_mostly")
+    if (isTRUE(debug_missing_tbl$above_thr_rate[i] == 0)) return("no_frames_above_threshold")
+    if (isTRUE(debug_missing_tbl$max_run_above[i] < min_len)) return(paste0("runs_above_exist_but_shorter_than_min_len_", min_len))
+    "no_event_unknown"
+  }, character(1))
+}
+
+debug_missing_tbl <- debug_missing_tbl %>%
+  select(
+    win_id, TAG, q, threshold, t_start, t_end, n_frames,
+    na_rate, teacher_off_rate, above_thr_rate, max_run_above,
+    missing_reason, has_event
+  )
+
+write_csv(debug_missing_tbl, out_debug_csv)
+
+# ----------------------------
+# (4.2) SUMMARY
 # ----------------------------
 summary_tbl <- tibble(
   TAG = TAG,
@@ -222,7 +314,7 @@ summary_tbl <- tibble(
 write_csv(summary_tbl, out_summary_csv)
 
 # ----------------------------
-# ROBUSTNESS
+# (5) ROBUSTNESS
 # ----------------------------
 robust_tbl <- bind_rows(lapply(q_robust, function(qq) {
   ev <- extract_events(dat2, qq, min_len, fps)
@@ -237,4 +329,7 @@ robust_tbl <- bind_rows(lapply(q_robust, function(qq) {
 }))
 write_csv(robust_tbl, out_robust_csv)
 
-cat("DONE:", TAG, "\n")
+cat("DONE:", TAG, "\n",
+    "Input :", normalizePath(csv_path, winslash = "/", mustWork = FALSE), "\n",
+    "Events:", normalizePath(out_events_csv, winslash = "/", mustWork = FALSE), "\n",
+    "Debug :", normalizePath(out_debug_csv, winslash = "/", mustWork = FALSE), "\n")
