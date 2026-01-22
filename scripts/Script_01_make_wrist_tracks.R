@@ -19,6 +19,10 @@
 #   Set ONE of:
 #     Sys.setenv(RETICULATE_PYTHON=".../python")
 #     Sys.setenv(MP_PYTHON=".../python")
+
+# NOTE 01-A: 
+#     We do not interpret individual landmark positions semantically.
+#     All downstream analyses operate on derived kinematic magnitudes (speed), not pose meaning.
 ## ============================================================
 
 suppressPackageStartupMessages({
