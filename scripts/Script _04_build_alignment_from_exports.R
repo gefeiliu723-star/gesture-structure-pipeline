@@ -17,6 +17,10 @@
 #   Rscript 04_build_alignment_from_template.R
 #   Rscript 04_build_alignment_from_template.R l02
 #   Rscript 04_build_alignment_from_template.R l02 30 1.5
+# 
+# NOTE 04-A
+#   Structural points are defined independently of gesture data and may be noisy.
+#   The alignment step therefore uses a tolerance window (±dt) rather than exact temporal coincidence.
 # ============================================================
 
 suppressPackageStartupMessages({
