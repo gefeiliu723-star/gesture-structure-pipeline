@@ -40,7 +40,7 @@ A bifurcated R / Python architecture (via `reticulate`) that produces serialized
 
 Confidence-based filtering is used solely as a robustness analysis on the quality of structural annotations, not as a criterion for defining discourse structure itself.
 
-Structural points are manually assigned a confidence score (1–3) reflecting annotation clarity.
+Discourse-structural nodes (e.g., pedagogical transitions or conceptual shifts) are identified via manual annotation of instructional structure based on instructional flow and discourse organization, and assigned a confidence score (1–3).
 
 Primary analyses use all structural points.
 
