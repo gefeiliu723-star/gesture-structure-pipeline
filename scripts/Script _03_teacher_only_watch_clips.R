@@ -20,6 +20,9 @@
 #
 # ROOT:
 #   MKAP_ROOT env var; fallback getwd() (run from repo root)
+# NOTE 03-A（极其重要）
+#   Watch points are used solely for qualitative inspection and annotation support.
+#   They do not enter statistical inference and do not affect event counts or enrichment results.
 ## ============================================================
 
 suppressPackageStartupMessages({
