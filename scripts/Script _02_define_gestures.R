@@ -18,6 +18,16 @@
 # Optional env var:
 #   GESTURE_PROJECT_ROOT=/path/to/repo_root
 #   (default: current working directory)
+
+# NOTE 02-A
+#   Gesture events are defined as sustained local maxima in hand speed, not communicative acts.
+#   The event definition is intentionally agnostic to gesture type or semantic content.
+
+# NOTE 02-B
+#   Quantile thresholds are computed within-video to preserve relative salience under heterogeneous recording conditions.
+
+# NOTE 02-C（防 reviewer）
+#   Windows without detected events are explicitly categorized (e.g., teacher absence, insufficient run length), rather than treated as missing data.
 # ============================================================
 
 suppressPackageStartupMessages({
