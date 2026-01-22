@@ -31,6 +31,11 @@
 #
 # CLI:
 #   Rscript scripts/05_time_enrichment_portable.R --align l05_alignment.xlsx --wrist wrist_tracks_l05.csv --window 1.5 --perm 5000 --seed 1 --out results
+# 
+# NOTE 05-A
+#   Lift is defined as the ratio of event rates inside versus outside structural windows, controlling for unequal window coverage.
+# NOTE 05-B（null 的意义）
+#   The teacher-only null controls for temporal availability of observable gesture, isolating alignment from mere presence.
 # ============================================================
 
 suppressPackageStartupMessages({
