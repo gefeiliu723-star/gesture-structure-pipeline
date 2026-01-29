@@ -13,7 +13,6 @@ The pipeline is designed as a **methods-companion codebase** supporting quantita
 
 ## Pipeline Summary
 
-![MKAP Pipeline](mkap_pipeline_flow.png)
 
 MKAP proceeds through four conceptual stages:
 
