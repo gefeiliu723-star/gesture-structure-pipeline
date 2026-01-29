@@ -19,7 +19,7 @@
 #   Rscript scripts/03_teacher_only_watchpoints_EVENT_ANCHORED.R m05 30 strong
 #
 # ROOT:
-#   MKAP_ROOT env var; fallback getwd() (run from repo root)
+#   GESTURE_PROJECT_ROOT env var; fallback getwd() (run from repo root)
 # NOTE 03-A（极其重要）
 #   Watch points are used solely for qualitative inspection and annotation support.
 #   They do not enter statistical inference and do not affect event counts or enrichment results.
@@ -67,7 +67,7 @@ STRENGTH_WINDOW <- 0.25   # seconds around event time
 # Teacher presence definition
 conf_min <- 0.35
 shoulder_vis_min <- 0.45
-shoulder_ok_mode <- "both"   # "both" or "either"
+shoulder_ok_mode <- "either"   # "both" or "either"
 
 # Selection constraints
 min_gap_s <- 2.0
