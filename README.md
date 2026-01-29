@@ -1,82 +1,100 @@
-# Quantitative Gesture–Discourse Alignment Pipeline
-
-*Multi-Modal Kinematic Alignment Pipeline (MKAP)*
+# Quantitative Gesture–Discourse Alignment Pipeline  
+**Multi-Modal Kinematic Alignment Pipeline (MKAP)**
 
 ---
 
 ## Overview
 
-This project introduces an automated, reproducible pipeline for examining the **temporal alignment between teacher kinematics and instructional discourse**. By integrating **computer vision** with **signal processing**, MKAP shifts analysis away from categorical gesture labeling toward the **objective measurement of rhythmic behavioral enrichment** around discourse-structural nodes.
+This repository provides an automated, reproducible pipeline for examining the **temporal alignment between teachers’ bodily kinematics and instructional discourse structure**. By integrating computer vision–based pose tracking with signal-processing and statistical modeling, MKAP enables the analysis of **continuous movement dynamics** without reliance on categorical gesture labeling.
 
-Pilot analyses indicate that gesture events are significantly enriched (p < .001) near discourse-structural boundaries, suggesting that gesture serves as an externalized "punctuation" for instructional logic.
+The pipeline is designed as a **methods-companion codebase** supporting quantitative investigations of how embodied behavior is temporally organized around discourse-structural events in naturalistic instruction.
 
+---
 
-## Pipeline Overview
+## Pipeline Summary
 
 ![MKAP Pipeline](mkap_pipeline_flow.png)
+
+MKAP proceeds through four conceptual stages:
+
+1. **Video-based kinematic extraction**
+2. **Continuous signal transformation**
+3. **Event detection**
+4. **Statistical alignment with discourse structure**
+
+Each stage is modular, deterministic, and independently inspectable.
 
 ---
 
 ## Core Capabilities
 
 ### Computer Vision Front-End
-Automated instructor localization via YOLO-based person detection, followed by high-fidelity extraction of upper-limb pose landmarks (shoulder, elbow, wrist) using the MediaPipe framework.
 
-### Kinematic Signal Synthesis
-Transformation of raw positional trajectories into continuous velocity and acceleration signals, remaining agnostic to communicative intent to preserve methodological objectivity.
+Instructors are automatically localized using YOLO-based person detection. Upper-limb pose landmarks (shoulders, elbows, wrists) are then extracted using the MediaPipe Pose framework. The system operates on raw classroom video and produces frame-level kinematic trajectories.
 
-### Stochastic Event Detection
-Identification of salient gesture events through quantile-based thresholding and temporal clustering of kinematic peaks.
+### Kinematic Signal Construction
 
-### Rate-Normalized Alignment
-Statistical estimation of gesture density enrichment near discourse-structural boundaries using lift statistics and permutation-based baselines.
+Raw landmark positions are transformed into continuous kinematic signals (e.g., velocity and acceleration). These signals are treated as **purely physical time series**, remaining agnostic to communicative intent or gesture semantics.
+
+### Event Detection
+
+Salient gesture events are identified using quantile-based thresholding and temporal clustering of kinematic peaks. Event detection is fully automated and parameterized, enabling systematic sensitivity analyses.
+
+### Alignment and Enrichment Analysis
+
+Gesture events are aligned to independently annotated discourse-structural points. Enrichment is quantified using rate-normalized lift statistics and permutation-based null models, allowing assessment of whether gesture activity is temporally concentrated near structural boundaries beyond chance expectations.
 
 ### Analytic Orchestration
-A bifurcated R / Python architecture (via `reticulate`) that produces serialized data tables and diagnostic workbooks for downstream statistical modeling.
+
+The pipeline employs an R-centric workflow, with Python-based computer vision modules integrated via `reticulate`. Intermediate outputs are serialized as standardized tables and diagnostic workbooks, enabling transparent downstream statistical analysis and visualization in R.
 
 ---
 
-## Robustness Analysis (Confidence-Based Filtering)
+## Robustness Analysis: Annotation Confidence
 
-Confidence-based filtering is used solely as a robustness analysis on the quality of structural annotations, not as a criterion for defining discourse structure itself.
+Confidence-based filtering is used **only for robustness analyses**, not to define discourse structure.
 
-Discourse-structural nodes (e.g., pedagogical transitions or conceptual shifts) are identified via manual annotation of instructional structure based on instructional flow and discourse organization, and assigned a confidence score (1–3).
+Discourse-structural nodes (e.g., pedagogical transitions or conceptual shifts) are identified via manual annotation of instructional flow and assigned a confidence score (1–3).
 
-Primary analyses use all structural points.
-
+Primary analyses include **all** annotated structural points.  
 Robustness checks repeat analyses using only high-confidence points (e.g., confidence = 3).
 
-This procedure evaluates sensitivity to annotation quality, not alignment rules or event definitions.
+This procedure assesses sensitivity to annotation reliability rather than modifying alignment rules or event definitions.
 
 ---
 
-## Data Governance & Privacy
+## Data Governance and Privacy
 
 ### Zero-Data Policy
-This repository contains only algorithmic code.  
-No video assets, identifiable human subject data, or copyrighted instructional materials are included.
+
+This repository contains **code only**.  
+No video files, identifiable human-subject data, or copyrighted instructional materials are included.
 
 ### Local Execution
-All processing is performed on user-provided local datasets.  
+
+All processing is performed locally on user-provided data.  
 No data are transmitted to external servers.
 
-### Schema Consistency
-The pipeline interfaces with standardized annotation formats (e.g., CSV or ELAN-style discourse markers) while remaining agnostic to annotation semantics.
+### Schema Compatibility
+
+The pipeline interfaces with standard annotation formats (e.g., CSV, ELAN-style time markers) while remaining agnostic to annotation semantics.
 
 ---
 
-## Reproducibility & Portability
+## Reproducibility and Portability
 
-MKAP is designed in accordance with Open Science principles.
+MKAP is designed in accordance with open-science and reproducible-research principles.
+
+### Deterministic Execution
+
+Given identical kinematic inputs and hyperparameters (e.g., window sizes, quantile thresholds), the pipeline yields deterministic outputs.
 
 ### Configurable Environments
-Execution parameters, file paths, and detection thresholds are externalized via user-specific configuration or environment variables.
 
-### Deterministic Logic
-Given identical kinematic inputs and hyper-parameters (e.g., quantile thresholds, window sizes), the pipeline yields reproducible, deterministic outputs.
+Execution paths, thresholds, and dataset locations are configurable via script-level parameters or environment variables.
 
-An empty Excel template defining alignment structure and formulas is provided in `templates/`.  
-No data or annotations are embedded.
+An empty Excel alignment template defining data structure and formulas is provided in `templates/`.  
+No annotations or results are embedded in the repository.
 
 ---
 
@@ -90,54 +108,74 @@ No data or annotations are embedded.
 - `numpy`
 - `pandas`
 
+YOLOv8 pretrained weights (e.g., `yolov8n.pt`) are automatically downloaded at runtime by the Ultralytics package and are not included in this repository.
+
 ### R
 - R 4.2+
 - `tidyverse`
 - `openxlsx`
 - `reticulate`
 
-The pipeline uses YOLOv8 for person detection.  
-Pretrained weights (e.g., `yolov8n.pt`) are automatically downloaded by the Ultralytics package at runtime and are not included in this repository.
-
 ---
 
-## Installation
+## Installation and Execution
 
 This repository is intended for research use rather than turnkey deployment.
 
 1. Install Python and required packages (e.g., via `pip` or `conda`)
 2. Install R and required packages
-3. Configure environment variables or local paths for user-provided datasets
+3. Configure local paths or environment variables for user-provided datasets
 4. Execute scripts sequentially following the pipeline order documented in `scripts/`
 
-The downstream analysis stage requires a single alignment workbook located at:
+Downstream analyses require a single alignment workbook located at:
 
-`exports/<tag>/<tag>_alignment.xlsx`
 
-Analysis results are written to a tag-specific subdirectory under `results/`, which does **not** need to exist in advance and will be created automatically.
+Results are written to tag-specific subdirectories under `results/`, which are created automatically if absent.
 
 ---
 
 ## Architecture
 
-An R-centric pipeline with Python computer vision modules integrated through reticulate, enabling a fully R-native workflow without requiring direct interaction with Python code.
+MKAP adopts an **R-centric architecture** with Python-based computer vision modules integrated through `reticulate`.
 
-### Unified R–Python Architecture
-
-The pipeline utilizes a unified R–Python architecture via `reticulate`.  
-By bridging YOLOv8 and MediaPipe directly into the R environment, the framework enables in-memory data transfer, ensuring a seamless flow from raw video to statistical modeling without the overhead of intermediate files.
+This design enables a fully R-native analytical workflow while leveraging mature Python libraries for low-level video processing. Users do not manually execute Python code; all processing is orchestrated from R.
 
 ---
 
-## Ethics & Compliance
+## Ethics and Compliance
 
-Users are responsible for ensuring that application of this pipeline complies with institutional IRB protocols, GDPR / FERPA regulations, and informed-consent requirements governing the source footage.
+Users are responsible for ensuring that application of this pipeline complies with institutional IRB protocols, GDPR / FERPA regulations, and informed-consent requirements governing source materials.
 
 ---
 
 ## License
 
 This project is released under the MIT License.
+
+---
+
+## What This Pipeline Does *Not* Claim
+
+MKAP is designed as a quantitative methods framework for analyzing the **temporal organization** of bodily kinematics relative to discourse structure. Accordingly, the pipeline makes no claims beyond what is directly supported by its measurements and analytic scope.
+
+Specifically, MKAP does **not** claim:
+
+- **Semantic interpretation of gesture.**  
+  The pipeline does not classify gestures by type, meaning, or communicative intent. All analyses operate on continuous kinematic signals derived from pose trajectories, independent of gesture semantics.
+
+- **Causal influence between gesture and discourse.**  
+  Temporal alignment or enrichment near discourse-structural boundaries is not interpreted as evidence that gesture causes, initiates, or determines discourse structure (or vice versa). The pipeline quantifies timing relationships only.
+
+- **Cognitive state inference.**  
+  Measures produced by MKAP are not direct indicators of attention, understanding, intention, or learning. Any cognitive interpretations must be theoretically motivated and supported by independent evidence.
+
+- **Generality beyond the analyzed context.**  
+  Findings obtained using this pipeline are contingent on the instructional settings, populations, and discourse annotation schemes to which it is applied. MKAP does not assume universality across domains or interaction types.
+
+- **Annotation objectivity.**  
+  Discourse-structural annotations are treated as externally supplied analytic inputs. While robustness analyses assess sensitivity to annotation confidence, the pipeline does not claim to discover or validate discourse structure autonomously.
+
+By explicitly separating **measurement**, **alignment**, and **interpretation**, MKAP is intended to support principled empirical investigation while leaving theoretical claims to be developed and evaluated at the level of individual studies.
 
 ---
 
