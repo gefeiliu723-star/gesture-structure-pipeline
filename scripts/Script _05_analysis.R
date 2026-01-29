@@ -189,7 +189,7 @@ sample_from_intervals <- function(intervals_df, n) {
 
 # teacher-present allowed intervals from wrist_tracks
 build_teacher_allowed_intervals <- function(wrist_csv, T_total, w,
-                                            conf_min = 0.50,
+                                            conf_min = 0.35,
                                             shoulder_ok_mode = c("either", "both")) {
   shoulder_ok_mode <- match.arg(shoulder_ok_mode)
   
