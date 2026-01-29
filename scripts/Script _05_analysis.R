@@ -1,41 +1,39 @@
 # ============================================================
-# Script 05 (PORTABLE / FINAL): Time-based enrichment around structural points
-#
-# NO TAG / NO absolute root.
-# User provides files:
-#   --align  path/to/<alignment>.xlsx   (REQUIRED)
-#   --wrist  path/to/wrist_tracks_<TAG>.csv  (OPTIONAL; only needed for teacher_only)
+# Script 05 : Time-based enrichment around structural points
 #
 # Observed:
-#   - Structural points = t_struct_sec from:
-#       * PRIORITY: Alignment sheet (has Confidence)
-#       * fallback: StructuralPoints sheet (no Confidence -> conf3 skipped)
+#   - Structural points from alignment xlsx
+#     * PRIORITY: Alignment sheet (has Confidence)
+#     * fallback: StructuralPoints sheet (no Confidence -> conf1/2/3 skipped)
 #   - Events = gesture event peaks from GestureEvents sheet
-#       * Template note: GestureEvents$t_sec IS peak time (treated as peak_sec)
-#   - Compute r_in vs r_out (OUT = rest of time)
+#   - Compute r_in vs r_out over full-time baseline (OUT = rest of lesson)
 #
-# Nulls:
-#   1) global:       sample n_points uniformly in [w, T_total-w]
-#   2) teacher_only: sample n_points uniformly within teacher-present intervals
-#                   (derived from wrist_tracks csv)
+# Nulls (run BOTH):
+#   1) global: sample n_points times uniformly in [w, T_total-w]
+#   2) teacher_only: sample n_points times uniformly ONLY within teacher-present time
+#      (teacher-present derived from exports/wrist_tracks/wrist_tracks_<TAG>.csv)
 #
-# Output:
-#   <out_root>/<tag_or_filebase>/time_enrichment_<pointset>_<null_mode>/
-#     - <prefix>_summary_overall.csv
-#     - <prefix>_windows_union.csv
-#     - <prefix>_events_within_flags.csv
-#     - <prefix>_perm_overall.csv
-#     - <prefix>_allowed_intervals.csv
-#   plus MASTER summary:
-#     <out_root>/<tag_or_filebase>/time_enrichment_MASTER_summary.csv
+# Pointsets:
+#   - all_points always
+#   - conf1_only/conf2_only/conf3_only when Confidence available
+#     (otherwise included in MASTER as skipped rows)
+#
+# OUTPUT:
+#   results/<TAG>/time_enrichment_<pointset>_<null_mode>/
+#     - <TAG>_summary_overall.csv
+#     - <TAG>_windows_union.csv
+#     - <TAG>_events_within_flags.csv
+#     - <TAG>_perm_overall.csv
+#     - <TAG>_allowed_intervals.csv
+#   plus:
+#   results/<TAG>/time_enrichment_MASTER_summary.csv
 #
 # CLI:
-#   Rscript scripts/05_time_enrichment_portable.R --align l05_alignment.xlsx --wrist wrist_tracks_l05.csv --window 1.5 --perm 5000 --seed 1 --out results
-# 
-# NOTE 05-A
-#   Lift is defined as the ratio of event rates inside versus outside structural windows, controlling for unequal window coverage.
-# NOTE 05-B（null 的意义）
-#   The teacher-only null controls for temporal availability of observable gesture, isolating alignment from mere presence.
+#   Rscript scripts/05_analysis.R m01 1.5 5000 1
+#     args: TAG, window_s, n_perm, seed
+#
+# Env (optional):
+#   GESTURE_PROJECT_ROOT=/path/to/repo_root
 # ============================================================
 
 suppressPackageStartupMessages({
@@ -47,43 +45,43 @@ suppressPackageStartupMessages({
 })
 
 # ----------------------------
-# (0) CLI PARSE (simple)
+# (0) SETTINGS / CLI
 # ----------------------------
 args <- commandArgs(trailingOnly = TRUE)
 
-get_arg <- function(flag, default = NULL) {
-  i <- match(flag, args)
-  if (!is.na(i) && i < length(args)) return(args[[i + 1]])
-  default
-}
+TAG_in   <- if (length(args) >= 1) args[[1]] else "l04_3"
+window_s <- if (length(args) >= 2) as.numeric(args[[2]]) else 1.5
+n_perm   <- if (length(args) >= 3) as.integer(args[[3]]) else 5000L
+seed     <- if (length(args) >= 4) as.integer(args[[4]]) else 1L
 
-align_xlsx <- get_arg("--align", NULL)
-wrist_csv  <- get_arg("--wrist", NULL)
-window_s   <- as.numeric(get_arg("--window", "1.5"))
-n_perm     <- as.integer(get_arg("--perm", "5000"))
-seed       <- as.integer(get_arg("--seed", "1"))
-out_root   <- get_arg("--out", "results")
-
-stopifnot(!is.null(align_xlsx), nzchar(align_xlsx), file.exists(align_xlsx))
 stopifnot(is.finite(window_s), window_s > 0)
 stopifnot(is.finite(n_perm), n_perm >= 100)
 stopifnot(is.finite(seed))
 
-# derive a stable tag/prefix from filename (e.g., l05_alignment.xlsx -> l05)
-base_name <- basename(align_xlsx)
-tag_guess <- str_replace(base_name, "\\.xlsx$", "")
-tag_guess <- str_replace(tag_guess, "_alignment$", "")
-TAG <- tag_guess
+set.seed(seed)
 
-dir.create(out_root, recursive = TRUE, showWarnings = FALSE)
-results_root <- file.path(out_root, TAG)
+# Canonical TAG (internal): underscores
+TAG_raw <- str_trim(TAG_in)
+TAG <- str_replace_all(TAG_raw, "-", "_")
+if (TAG_raw != TAG) message("TAG normalized: ", TAG_raw, " -> ", TAG)
+
+TAG_dash <- str_replace_all(TAG, "_", "-") # alternate form for file matching
+
+# Portable project root:
+#  1) env var GESTURE_PROJECT_ROOT
+#  2) fallback: current working directory (assumed repo root)
+project_root <- Sys.getenv("GESTURE_PROJECT_ROOT", unset = getwd())
+exports_root <- file.path(project_root, "exports")
+results_root <- file.path(project_root, "results")
+
 dir.create(results_root, recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(results_root, TAG), recursive = TRUE, showWarnings = FALSE)
 
-message("Using align_xlsx: ", normalizePath(align_xlsx, winslash = "/"))
-if (!is.null(wrist_csv)) message("Using wrist_csv : ", normalizePath(wrist_csv, winslash = "/"))
-message("TAG prefix       : ", TAG)
-message("window_s         : ", window_s, " | n_perm=", n_perm, " | seed=", seed)
-message("out_root         : ", normalizePath(out_root, winslash = "/"))
+cat("[INFO] project_root:", normalizePath(project_root, winslash = "/", mustWork = FALSE), "\n")
+cat("[INFO] TAG         :", TAG, "\n")
+cat("[INFO] window_s    :", window_s, "\n")
+cat("[INFO] n_perm      :", n_perm, "\n")
+cat("[INFO] seed        :", seed, "\n\n")
 
 # ----------------------------
 # (1) HELPERS
@@ -128,13 +126,15 @@ union_intervals <- function(df_intervals) {
   out_s <- numeric(0); out_e <- numeric(0)
   cs <- starts[[1]]; ce <- ends[[1]]
   
-  for (i in 2:length(starts)) {
-    s <- starts[[i]]; e <- ends[[i]]
-    if (s <= ce) {
-      ce <- max(ce, e)
-    } else {
-      out_s <- c(out_s, cs); out_e <- c(out_e, ce)
-      cs <- s; ce <- e
+  if (length(starts) >= 2) {
+    for (i in 2:length(starts)) {
+      s <- starts[[i]]; e <- ends[[i]]
+      if (s <= ce) {
+        ce <- max(ce, e)
+      } else {
+        out_s <- c(out_s, cs); out_e <- c(out_e, ce)
+        cs <- s; ce <- e
+      }
     }
   }
   out_s <- c(out_s, cs); out_e <- c(out_e, ce)
@@ -169,6 +169,7 @@ flag_in_union <- function(peaks, union_df) {
   inw
 }
 
+# sample uniformly from a union of disjoint intervals (by length)
 sample_from_intervals <- function(intervals_df, n) {
   stopifnot(n >= 1)
   if (nrow(intervals_df) == 0) stop("No allowed intervals to sample from.")
@@ -186,26 +187,26 @@ sample_from_intervals <- function(intervals_df, n) {
   out
 }
 
+# teacher-present allowed intervals from wrist_tracks
 build_teacher_allowed_intervals <- function(wrist_csv, T_total, w,
                                             conf_min = 0.50,
                                             shoulder_ok_mode = c("either", "both")) {
   shoulder_ok_mode <- match.arg(shoulder_ok_mode)
-  stopifnot(file.exists(wrist_csv))
   
   dat <- readr::read_csv(wrist_csv, show_col_types = FALSE)
   names(dat) <- clean_names(names(dat))
   
   col_t <- pick_col(dat, c("time_sec", "t_sec", "time_s", "time"))
-  if (is.na(col_t)) stop("wrist_tracks missing time column (time_sec/t_sec/time).")
+  if (is.na(col_t)) stop("wrist_tracks missing a time column (time_sec/t_sec/time).")
   
-  t <- suppressWarnings(as.numeric(dat[[col_t]]))
+  t <- as.numeric(dat[[col_t]])
   ok_t <- is.finite(t)
   dat <- dat[ok_t, , drop = FALSE]
   t <- t[ok_t]
   
   col_conf <- pick_col(dat, c("conf_det", "conf", "det_conf"))
   conf_ok <- if (is.na(col_conf)) rep(TRUE, length(t)) else {
-    x <- suppressWarnings(as.numeric(dat[[col_conf]]))
+    x <- as.numeric(dat[[col_conf]])
     is.finite(x) & (x >= conf_min)
   }
   
@@ -213,8 +214,7 @@ build_teacher_allowed_intervals <- function(wrist_csv, T_total, w,
   col_rs <- pick_col(dat, c("rs_vis", "right_shoulder_vis", "rs_visible"))
   
   shoulders_ok <- if (!is.na(col_ls) && !is.na(col_rs)) {
-    ls <- suppressWarnings(as.numeric(dat[[col_ls]]))
-    rs <- suppressWarnings(as.numeric(dat[[col_rs]]))
+    ls <- as.numeric(dat[[col_ls]]); rs <- as.numeric(dat[[col_rs]])
     ls_ok <- is.finite(ls) & (ls > 0.5)
     rs_ok <- is.finite(rs) & (rs > 0.5)
     if (shoulder_ok_mode == "both") (ls_ok & rs_ok) else (ls_ok | rs_ok)
@@ -255,7 +255,53 @@ build_teacher_allowed_intervals <- function(wrist_csv, T_total, w,
 }
 
 # ----------------------------
-# (2) Load points (Alignment-first for Confidence)
+# (2) Locate alignment xlsx (ROBUST, no absolute paths)
+# ----------------------------
+if (!dir.exists(exports_root)) {
+  stop("exports/ folder not found. Run from repo root or set GESTURE_PROJECT_ROOT.", call. = FALSE)
+}
+
+all_align <- list.files(
+  path = exports_root,
+  pattern = "_alignment\\.xlsx$",
+  recursive = TRUE,
+  full.names = TRUE
+)
+
+if (length(all_align) == 0) {
+  stop("No *_alignment.xlsx found under exports/: ", exports_root, call. = FALSE)
+}
+
+targets <- c(
+  paste0(TAG, "_alignment.xlsx"),
+  paste0(TAG_dash, "_alignment.xlsx")
+)
+
+hit <- all_align[basename(all_align) %in% targets]
+
+# fallback: folder match
+if (length(hit) == 0) {
+  hit <- all_align[basename(dirname(all_align)) %in% c(TAG, TAG_dash)]
+}
+
+if (length(hit) == 0) {
+  stop(
+    "Cannot find alignment xlsx for TAG=", TAG, "\n",
+    "Tried tags: ", paste(c(TAG, TAG_dash), collapse = ", "), "\n",
+    "Under: ", exports_root,
+    call. = FALSE
+  )
+}
+
+if (length(hit) > 1) {
+  warning("Multiple alignment files matched TAG=", TAG, ". Using first:\n", hit[[1]])
+}
+
+align_xlsx <- hit[[1]]
+message("Using align_xlsx: ", normalizePath(align_xlsx, winslash="/", mustWork = FALSE))
+
+# ----------------------------
+# (3) Load points (Alignment-first for Confidence)
 # ----------------------------
 read_points_alignment_first <- function(xlsx) {
   if (sheet_exists(xlsx, "Alignment")) {
@@ -270,7 +316,7 @@ read_points_alignment_first <- function(xlsx) {
     
     points <- tibble(
       PointID = if (!is.na(col_pid)) as.character(A[[col_pid]]) else NA_character_,
-      t_struct_sec = suppressWarnings(as.numeric(A[[col_t]])),
+      t_struct_sec = as.numeric(A[[col_t]]),
       Confidence = if (!is.na(col_conf)) suppressWarnings(as.numeric(A[[col_conf]])) else NA_real_
     ) %>% filter(is.finite(t_struct_sec))
     
@@ -288,7 +334,7 @@ read_points_alignment_first <- function(xlsx) {
     
     points <- tibble(
       PointID = if (!is.na(col_pid)) as.character(SP[[col_pid]]) else NA_character_,
-      t_struct_sec = suppressWarnings(as.numeric(SP[[col_t]])),
+      t_struct_sec = as.numeric(SP[[col_t]]),
       Confidence = NA_real_
     ) %>% filter(is.finite(t_struct_sec))
     
@@ -304,23 +350,26 @@ conf_available <- tmp$conf_available
 message("Points loaded from: ", tmp$source, " | conf_available=", conf_available)
 
 points_all <- points_df %>% distinct(t_struct_sec, .keep_all = TRUE)
-points_conf3 <- if (conf_available) {
-  points_df %>% filter(Confidence == 3) %>% distinct(t_struct_sec, .keep_all = TRUE)
-} else {
-  points_df[0, ]
+
+points_conf1 <- if (conf_available) points_df %>% filter(Confidence == 1) %>% distinct(t_struct_sec, .keep_all = TRUE) else points_df[0, ]
+points_conf2 <- if (conf_available) points_df %>% filter(Confidence == 2) %>% distinct(t_struct_sec, .keep_all = TRUE) else points_df[0, ]
+points_conf3 <- if (conf_available) points_df %>% filter(Confidence == 3) %>% distinct(t_struct_sec, .keep_all = TRUE) else points_df[0, ]
+
+message("n_points_all=", nrow(points_all),
+        " | conf1=", nrow(points_conf1),
+        " | conf2=", nrow(points_conf2),
+        " | conf3=", nrow(points_conf3))
+
+# ----------------------------
+# (4) Load events (GestureEvents peaks)
+# ----------------------------
+if (!sheet_exists(align_xlsx, "GestureEvents")) {
+  stop("GestureEvents sheet not found in: ", align_xlsx, call. = FALSE)
 }
 
-message("n_points_all=", nrow(points_all), " | n_points_conf3=", nrow(points_conf3))
-
-# ----------------------------
-# (3) Load events (peaks) from GestureEvents
-# ----------------------------
-stopifnot(sheet_exists(align_xlsx, "GestureEvents"))
 E <- openxlsx::read.xlsx(align_xlsx, sheet = "GestureEvents")
 names(E) <- clean_names(names(E))
 
-# Template rule:
-# GestureEvents$t_sec IS peak time (peak_sec)
 col_peak <- pick_col(E, c(
   "peak_sec", "t_sec",
   "t_peak", "tpeak",
@@ -328,7 +377,9 @@ col_peak <- pick_col(E, c(
   "peak_sec_proxy",
   "peak", "peak_s", "peak_time"
 ))
-if (is.na(col_peak)) stop("GestureEvents missing peak time column (peak_sec / t_sec / ...).")
+if (is.na(col_peak)) {
+  stop("GestureEvents must contain a peak time column (peak_sec / t_sec / t_peak / ...).", call. = FALSE)
+}
 
 col_eid <- pick_col(E, c("EventID","eventid","EventId","event_id"))
 
@@ -338,17 +389,17 @@ stopifnot(length(peaks) >= 1)
 
 peaks_sorted <- sort(peaks)
 
-# robust total time: cover both events and points
+# Robust T_total = max(events, points)
 T_events <- max(peaks_sorted, na.rm = TRUE)
 T_points <- max(points_all$t_struct_sec, na.rm = TRUE)
 T_total  <- max(T_events, T_points)
 
-if (!is.finite(T_total) || T_total <= 2 * window_s) {
-  stop("T_total too small/invalid relative to window_s. T_total=", T_total, " window_s=", window_s)
+if (!is.finite(T_total) || T_total <= 2*window_s) {
+  stop("T_total too small/invalid relative to window_s. T_total=", T_total, " window_s=", window_s, call. = FALSE)
 }
-if (T_points > T_events + 1e-6) {
-  warning("Points extend beyond max event peak time; using T_total=max(events, points). ",
-          "T_points=", signif(T_points,4), " T_events=", signif(T_events,4))
+if (is.finite(T_points) && T_points > T_events + 1e-6) {
+  warning("Structural points extend beyond max event peak time. Using T_total=max(events, points).",
+          " T_points=", signif(T_points,4), " T_events=", signif(T_events,4))
 }
 
 make_events_flags <- function(in_flag_vec) {
@@ -356,7 +407,7 @@ make_events_flags <- function(in_flag_vec) {
   if (!is.na(col_eid)) {
     EE <- tibble(
       EventID = as.character(E[[col_eid]]),
-      peak_sec = suppressWarnings(as.numeric(E[[col_peak]]))
+      peak_sec = as.numeric(E[[col_peak]])
     ) %>% filter(is.finite(peak_sec)) %>% arrange(peak_sec)
     out <- bind_cols(EE %>% select(EventID), out)
   }
@@ -364,7 +415,7 @@ make_events_flags <- function(in_flag_vec) {
 }
 
 # ----------------------------
-# (4) RUN ONE: pointset × null_mode
+# (5) RUN ONE COMBINATION: pointset × null_mode
 # ----------------------------
 run_one <- function(pointset_name, t_struct_vec, null_mode) {
   stopifnot(null_mode %in% c("global","teacher_only"))
@@ -374,8 +425,25 @@ run_one <- function(pointset_name, t_struct_vec, null_mode) {
   
   n_points_obs <- length(t_struct)
   if (n_points_obs == 0) {
-    warning("Skipping: ", pointset_name, " × ", null_mode, " (n_points_obs=0)")
-    return(NULL)
+    return(tibble(
+      tag = TAG,
+      pointset = pointset_name,
+      window_s = window_s,
+      n_struct_points = 0L,
+      T_total = T_total,
+      T_in = NA_real_, T_out = NA_real_,
+      N_all = length(peaks_sorted), N_in = NA_integer_, N_out = NA_integer_,
+      r_in = NA_real_, r_out = NA_real_,
+      lift = NA_real_,
+      delta_rate = NA_real_,
+      null_mode = null_mode,
+      allowed_time = NA_real_,
+      n_perm = n_perm,
+      seed = seed,
+      p_value_raw = NA_real_,
+      p_value_plus1 = NA_real_,
+      status = "skipped_no_points"
+    ))
   }
   
   win_obs <- make_windows(t_struct, window_s) %>% safe_clip_windows(., 0, T_total)
@@ -396,17 +464,50 @@ run_one <- function(pointset_name, t_struct_vec, null_mode) {
   in_flag <- flag_in_union(peaks_sorted, union_obs)
   events_flags_df <- make_events_flags(in_flag)
   
-  out_dir <- file.path(results_root, paste0("time_enrichment_", pointset_name, "_", null_mode))
+  out_dir <- file.path(results_root, TAG, paste0("time_enrichment_", pointset_name, "_", null_mode))
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   
   # allowed intervals for permutation
+  allowed_intervals <- NULL
+  allowed_total <- NA_real_
+  
   if (null_mode == "global") {
     allowed_intervals <- tibble(start = window_s, end = T_total - window_s)
+    allowed_total <- interval_length(allowed_intervals)
   } else {
-    if (is.null(wrist_csv) || !nzchar(wrist_csv)) {
-      stop("teacher_only requested but --wrist not provided.")
+    wrist_dir <- file.path(exports_root, "wrist_tracks")
+    wrist_candidates <- c(
+      file.path(wrist_dir, paste0("wrist_tracks_", TAG, ".csv")),
+      file.path(wrist_dir, paste0("wrist_tracks_", TAG_dash, ".csv"))
+    )
+    wrist_csv <- wrist_candidates[file.exists(wrist_candidates)][1]
+    
+    if (is.na(wrist_csv) || !nzchar(wrist_csv)) {
+      # teacher_only missing -> write skipped row + still save observed artifacts
+      write_csv(union_obs %>% mutate(tag = TAG, pointset = pointset_name, window_s = window_s),
+                file.path(out_dir, paste0(TAG, "_windows_union.csv")))
+      write_csv(events_flags_df, file.path(out_dir, paste0(TAG, "_events_within_flags.csv")))
+      
+      return(tibble(
+        tag = TAG,
+        pointset = pointset_name,
+        window_s = window_s,
+        n_struct_points = n_points_obs,
+        T_total = T_total,
+        T_in = T_in, T_out = T_out,
+        N_all = N_all, N_in = N_in, N_out = N_out,
+        r_in = r_in, r_out = r_out,
+        lift = lift,
+        delta_rate = delta,
+        null_mode = null_mode,
+        allowed_time = NA_real_,
+        n_perm = n_perm,
+        seed = seed,
+        p_value_raw = NA_real_,
+        p_value_plus1 = NA_real_,
+        status = "skipped_missing_wrist_tracks"
+      ))
     }
-    if (!file.exists(wrist_csv)) stop("teacher_only requires existing wrist_csv: ", wrist_csv)
     
     allowed_intervals <- build_teacher_allowed_intervals(
       wrist_csv = wrist_csv,
@@ -415,9 +516,10 @@ run_one <- function(pointset_name, t_struct_vec, null_mode) {
       conf_min = 0.50,
       shoulder_ok_mode = "either"
     )
+    allowed_total <- interval_length(allowed_intervals)
   }
-  allowed_total <- interval_length(allowed_intervals)
   
+  # permutation
   set.seed(seed)
   perm_rows <- vector("list", n_perm)
   
@@ -458,6 +560,7 @@ run_one <- function(pointset_name, t_struct_vec, null_mode) {
   
   perm_df <- bind_rows(perm_rows)
   
+  # p-values on delta (two-sided) with +1 correction
   if (is.finite(delta)) {
     more_extreme <- sum(abs(perm_df$delta_rate) >= abs(delta), na.rm = TRUE)
     p_raw   <- more_extreme / n_perm
@@ -483,45 +586,79 @@ run_one <- function(pointset_name, t_struct_vec, null_mode) {
     n_perm = n_perm,
     seed = seed,
     p_value_raw = p_raw,
-    p_value_plus1 = p_plus1
+    p_value_plus1 = p_plus1,
+    status = "ok"
   )
   
-  # write
+  # write files
   write_csv(summary_df, file.path(out_dir, paste0(TAG, "_summary_overall.csv")))
   write_csv(union_obs %>% mutate(tag = TAG, pointset = pointset_name, window_s = window_s),
             file.path(out_dir, paste0(TAG, "_windows_union.csv")))
   write_csv(events_flags_df, file.path(out_dir, paste0(TAG, "_events_within_flags.csv")))
   write_csv(perm_df, file.path(out_dir, paste0(TAG, "_perm_overall.csv")))
-  write_csv(allowed_intervals, file.path(out_dir, paste0(TAG, "_allowed_intervals.csv")))
+  if (!is.null(allowed_intervals)) {
+    write_csv(allowed_intervals, file.path(out_dir, paste0(TAG, "_allowed_intervals.csv")))
+  }
   
   message("DONE: ", pointset_name, " × ", null_mode,
           " | lift=", signif(lift, 4),
           " | delta=", signif(delta, 4),
-          " | p+1=", signif(p_plus1, 4),
-          " | out_dir=", normalizePath(out_dir, winslash = "/"))
+          " | p+1=", signif(p_plus1, 4))
   
   summary_df
 }
 
 # ----------------------------
-# (5) RUN ALL COMBINATIONS
+# (6) RUN ALL COMBINATIONS (always write MASTER rows)
 # ----------------------------
 master <- list()
 
-master[[length(master) + 1]] <- run_one("all_points", points_all$t_struct_sec, "global")
-master[[length(master) + 1]] <- run_one("all_points", points_all$t_struct_sec, "teacher_only")
+# always run all_points
+master[[length(master)+1]] <- run_one("all_points", points_all$t_struct_sec, "global")
+master[[length(master)+1]] <- run_one("all_points", points_all$t_struct_sec, "teacher_only")
 
-if (nrow(points_conf3) > 0) {
-  master[[length(master) + 1]] <- run_one("conf3_only", points_conf3$t_struct_sec, "global")
-  master[[length(master) + 1]] <- run_one("conf3_only", points_conf3$t_struct_sec, "teacher_only")
+# conf1/2/3: run if Confidence available; otherwise write skipped rows
+if (conf_available) {
+  master[[length(master)+1]] <- run_one("conf1_only", points_conf1$t_struct_sec, "global")
+  master[[length(master)+1]] <- run_one("conf1_only", points_conf1$t_struct_sec, "teacher_only")
+  
+  master[[length(master)+1]] <- run_one("conf2_only", points_conf2$t_struct_sec, "global")
+  master[[length(master)+1]] <- run_one("conf2_only", points_conf2$t_struct_sec, "teacher_only")
+  
+  master[[length(master)+1]] <- run_one("conf3_only", points_conf3$t_struct_sec, "global")
+  master[[length(master)+1]] <- run_one("conf3_only", points_conf3$t_struct_sec, "teacher_only")
 } else {
-  warning("No conf3 points (or Confidence unavailable). Skipping conf3_only runs.")
+  # ensure MASTER has the full grid even when Confidence missing
+  mk_skip <- function(ps, nm) tibble(
+    tag = TAG,
+    pointset = ps,
+    window_s = window_s,
+    n_struct_points = 0L,
+    T_total = T_total,
+    T_in = NA_real_, T_out = NA_real_,
+    N_all = length(peaks_sorted), N_in = NA_integer_, N_out = NA_integer_,
+    r_in = NA_real_, r_out = NA_real_,
+    lift = NA_real_,
+    delta_rate = NA_real_,
+    null_mode = nm,
+    allowed_time = NA_real_,
+    n_perm = n_perm,
+    seed = seed,
+    p_value_raw = NA_real_,
+    p_value_plus1 = NA_real_,
+    status = "skipped_confidence_unavailable"
+  )
+  for (ps in c("conf1_only","conf2_only","conf3_only")) {
+    master[[length(master)+1]] <- mk_skip(ps, "global")
+    master[[length(master)+1]] <- mk_skip(ps, "teacher_only")
+  }
 }
 
 master_df <- bind_rows(master)
 
-master_out <- file.path(results_root, "time_enrichment_MASTER_summary.csv")
+# Master summary
+master_out <- file.path(results_root, TAG, "time_enrichment_MASTER_summary.csv")
 write_csv(master_df, master_out)
 
 message("ALL DONE: ", TAG)
-message("MASTER -> ", normalizePath(master_out, winslash = "/"))
+message("MASTER -> ", normalizePath(master_out, winslash="/", mustWork = FALSE))
