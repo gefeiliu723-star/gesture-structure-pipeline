@@ -513,7 +513,7 @@ run_one <- function(pointset_name, t_struct_vec, null_mode) {
       wrist_csv = wrist_csv,
       T_total = T_total,
       w = window_s,
-      conf_min = 0.50,
+      conf_min = 0.35,
       shoulder_ok_mode = "either"
     )
     allowed_total <- interval_length(allowed_intervals)
