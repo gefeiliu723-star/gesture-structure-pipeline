@@ -46,7 +46,7 @@ stopifnot(is.finite(dt_seconds), dt_seconds > 0)
 # Script 3 gating params (must match your extraction schema)
 conf_min         <- 0.35
 shoulder_vis_min <- 0.45
-shoulder_ok_mode <- "both"   # "both" or "either"
+shoulder_ok_mode <- "either"   # "both" or "either"
 
 wd <- getwd()
 
